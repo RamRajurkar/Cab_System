@@ -1,0 +1,7 @@
+Flask
+Flask-Sockets
+Flask-Cors
+gevent
+Flask-Bcrypt
+PyJWT
+python-dotenv
