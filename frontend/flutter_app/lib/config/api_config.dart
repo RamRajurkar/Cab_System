@@ -7,11 +7,14 @@
 import 'package:flutter/foundation.dart';
 
 class ApiConfig {
+
+  static const baseUrl = 'https://cab-system-backend-31nf.onrender.com';
+  static const wsUrl = 'wss://cab-system-backend-31nf.onrender.com/cab_location_updates';
   // 🔹 Local Flask URL — replace with your computer’s IPv4
   static const String localUrl = "http://192.168.1.7:5001";
 
   // 🔹 Render backend URL — your hosted Flask API
-  static const String prodUrl = "https://smart-cab-backend.onrender.com";
+  static const String prodUrl = "https://cab-system-backend-31nf.onrender.com/";
 
   /// ✅ Force production mode (useful when debugging on phone via USB)
   /// Set to `true` to always use hosted Render backend.
@@ -25,9 +28,9 @@ class ApiConfig {
         forceProd ? prodUrl : (isProd ? prodUrl : localUrl);
 
     // 🐞 Debugging logs
-    debugPrint("🔧 [ApiConfig] Running in ${isProd ? 'Release' : 'Debug'} mode");
-    debugPrint("🌐 [ApiConfig] ForceProd: $forceProd");
-    debugPrint("🚀 [ApiConfig] Using backend URL: $selectedUrl");
+    // debugPrint("🔧 [ApiConfig] Running in ${isProd ? 'Release' : 'Debug'} mode");
+    // debugPrint("🌐 [ApiConfig] ForceProd: $forceProd");
+    // debugPrint("🚀 [ApiConfig] Using backend URL: $selectedUrl");
 
     return selectedUrl;
   }

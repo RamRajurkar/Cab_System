@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'screens/map_screen.dart';
-
-
 import 'screens/home_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/cab_registration_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
