@@ -135,6 +135,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final resp = await http.get(url);
       if (resp.statusCode == 200) {
         final List<dynamic> data = json.decode(resp.body);
+        debugPrint("Cab locations API response: ${resp.body}");
         final List<Map<String, dynamic>> cabs = [];
         for (var c in data) {
           if (c['latitude'] != null && c['longitude'] != null) {
@@ -395,11 +396,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => BookingStatusScreen(
-                                      cabName: cab['name'] ?? 'Cab',
-                                      fare: fare.toStringAsFixed(2),
-                                      cabStatus:
-                                          option['status'] ?? 'Available',
                                       cabId: cab['cab_id'],
+                                      cabInitialPosition: LatLng(cab['latitude'], cab['longitude']),
+                                      userSource: _sourceLocation!,
+                                      userDestination: _destinationLocation!,
+                                      fare: fare,
+                                      cabName: cab['name'] ?? 'Cab',
+                                      onCabsRefresh: _fetchCabLocations,
                                     ),
                                   ),
                                 );

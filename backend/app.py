@@ -169,6 +169,10 @@ def complete_ride(cab_id):
     if db.update_cab_status(cab_id, 'Available'):
         if cab_id in active_cab_targets:
             del active_cab_targets[cab_id]
+        broadcast_to_all({
+            "cab_id": cab_id,
+            "status": "Available"
+        })
         return jsonify({'message': f'Cab {cab_id} set to Available'}), 200
     return jsonify({'message': 'Failed to complete ride'}), 500
 

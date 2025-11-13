@@ -15,6 +15,8 @@ class BookingStatusScreen extends StatefulWidget {
   final LatLng userSource;
   final LatLng userDestination;
   final double fare;
+  final String cabName;
+  final VoidCallback onCabsRefresh;
 
   const BookingStatusScreen({
     Key? key,
@@ -23,6 +25,8 @@ class BookingStatusScreen extends StatefulWidget {
     required this.userSource,
     required this.userDestination,
     required this.fare,
+    required this.cabName,
+    required this.onCabsRefresh,
   }) : super(key: key);
 
   @override
@@ -73,6 +77,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
     _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
 
     _channel.stream.listen((event) {
+      debugPrint("WebSocket event received: $event");
       final data = jsonDecode(event);
       if (data["cab_id"] == widget.cabId) {
         final newLat = data["latitude"]?.toDouble();
@@ -124,6 +129,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
 
       setState(() {
         _cabPosition = LatLng(lat, lon);
+        _mapController.move(_cabPosition!, _mapController.camera.zoom);
       });
     });
   }
@@ -152,10 +158,13 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
+        debugPrint("Ride completion API response: ${response.body}");
         setState(() {
           _rideStatus = "Ride completed ✅";
           _isRideCompleted = true;
         });
+        widget.onCabsRefresh();
+        Navigator.pop(context);
       } else {
         debugPrint("❌ Ride completion failed: ${response.body}");
       }

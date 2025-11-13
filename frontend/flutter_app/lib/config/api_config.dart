@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart';
 
 class ApiConfig {
 
-  static const baseUrl = 'https://cab-system-backend-31nf.onrender.com';
+  // static const baseUrl = 'https://cab-system-backend-31nf.onrender.com';
   static const wsUrl = 'wss://cab-system-backend-31nf.onrender.com/cab_location_updates';
   // 🔹 Local Flask URL — replace with your computer’s IPv4
   static const String localUrl = "http://192.168.1.7:5001";
@@ -28,9 +28,9 @@ class ApiConfig {
         forceProd ? prodUrl : (isProd ? prodUrl : localUrl);
 
     // 🐞 Debugging logs
-    // debugPrint("🔧 [ApiConfig] Running in ${isProd ? 'Release' : 'Debug'} mode");
-    // debugPrint("🌐 [ApiConfig] ForceProd: $forceProd");
-    // debugPrint("🚀 [ApiConfig] Using backend URL: $selectedUrl");
+    debugPrint("🔧 [ApiConfig] Running in ${isProd ? 'Release' : 'Debug'} mode");
+    debugPrint("🌐 [ApiConfig] ForceProd: $forceProd");
+    debugPrint("🚀 [ApiConfig] Using backend URL: $selectedUrl");
 
     return selectedUrl;
   }
