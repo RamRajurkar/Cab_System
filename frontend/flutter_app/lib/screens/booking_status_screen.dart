@@ -17,6 +17,7 @@ class BookingStatusScreen extends StatefulWidget {
   final double fare;
   final String cabName;
   final VoidCallback onCabsRefresh;
+  final VoidCallback onRideCompleted;
 
   const BookingStatusScreen({
     Key? key,
@@ -27,6 +28,7 @@ class BookingStatusScreen extends StatefulWidget {
     required this.fare,
     required this.cabName,
     required this.onCabsRefresh,
+    required this.onRideCompleted,
   }) : super(key: key);
 
   @override
@@ -164,6 +166,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
           _isRideCompleted = true;
         });
         widget.onCabsRefresh();
+        widget.onRideCompleted();
         Navigator.pop(context);
       } else {
         debugPrint("❌ Ride completion failed: ${response.body}");

@@ -212,6 +212,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final cabId = cab['cab_id'];
     final url = Uri.parse('${ApiConfig.baseUrl}/api/book_cab');
 
+    debugPrint('Attempting to book ride for cab ID: $cabId');
+    debugPrint('Source Location: $_sourceLocation');
+    debugPrint('Destination Location: $_destinationLocation');
+
     final body = json.encode({
       'cab_id': cabId,
       'start_latitude': _sourceLocation!.latitude,
@@ -227,6 +231,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
         setState(() => _assignedCab = data);
+        debugPrint('Ride booked successfully. Assigned Cab: $_assignedCab');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Ride booked successfully!')),
         );
@@ -390,22 +395,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                   '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
                               isShared: option['is_shared'] ?? false,
                               fare: fare.toStringAsFixed(2),
-                              onBookNow: () {
-                                _bookRide(option);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => BookingStatusScreen(
-                                      cabId: cab['cab_id'],
-                                      cabInitialPosition: LatLng(cab['latitude'], cab['longitude']),
-                                      userSource: _sourceLocation!,
-                                      userDestination: _destinationLocation!,
-                                      fare: fare,
-                                      cabName: cab['name'] ?? 'Cab',
-                                      onCabsRefresh: _fetchCabLocations,
+                              onBookNow: (cabId) async {
+                                await _bookRide(option);
+                                if (_assignedCab != null) {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => BookingStatusScreen(
+                                        cabId: cabId,
+                                        cabInitialPosition: LatLng(cab['latitude'], cab['longitude']),
+                                        userSource: _sourceLocation!,
+                                        userDestination: _destinationLocation!,
+                                        fare: fare.toStringAsFixed(2),
+                                        cabName: cab['name'] ?? 'Cab',
+                                        onCabsRefresh: _fetchCabLocations,
+                                        onRideCompleted: () {
+                                          setState(() {
+                                            _foundCabDetails = null;
+                                            _assignedCab = null;
+                                          });
+                                          _fetchCabLocations();
+                                        },
+                                      ),
                                     ),
-                                  ),
-                                );
+                                  );
+                                }
                               },
                             );
                           },

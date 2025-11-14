@@ -167,10 +167,20 @@ def book_cab():
 @app.route('/api/complete_ride/<int:cab_id>', methods=['GET'])
 def complete_ride(cab_id):
     if db.update_cab_status(cab_id, 'Available'):
+        destination_lat = None
+        destination_lng = None
+        ride_details = db.get_ride_by_cab_id(cab_id)
+        if ride_details:
+            destination_lat = ride_details['end_latitude']
+            destination_lng = ride_details['end_longitude']
+            db.update_cab_location(cab_id, destination_lat, destination_lng)
+
         if cab_id in active_cab_targets:
             del active_cab_targets[cab_id]
         broadcast_to_all({
             "cab_id": cab_id,
+            "latitude": destination_lat,
+            "longitude": destination_lng,
             "status": "Available"
         })
         return jsonify({'message': f'Cab {cab_id} set to Available'}), 200
