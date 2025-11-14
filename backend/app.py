@@ -3,7 +3,7 @@ import json
 import random
 import threading
 import time
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -11,51 +11,54 @@ from flask_sock import Sock, ConnectionClosed
 from asgiref.wsgi import WsgiToAsgi
 from dotenv import load_dotenv
 
-# Your project imports (DB, helpers)
 from dsa.db_utils import DatabaseUtils
 from dsa.heap_utils import CabFinder
 from dsa.utils import calculate_distance, calculate_fare
 
 load_dotenv()
 
-# -------------------------
-# Flask + Sock initialization
-# -------------------------
+# -------------------------------------
+# Flask + Sock setup
+# -------------------------------------
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
 
-# Database helper (assumes your DatabaseUtils implementation exists)
+# Database helper (uses per-call connections; thread-safe)
 db = DatabaseUtils(db_path="database.db")
 
-# Thread-safe storage
-_clients_lock = threading.Lock()
-_ws_clients: List[Any] = []  # actual websocket objects from flask-sock
+# Thread-safe websocket client list
+_ws_clients_lock = threading.Lock()
+_ws_clients: List[Any] = []
 
-# active targets: cab_id -> { target_lat, target_lng, phase: 'to_pickup'|'to_destination' }
+# Active targets: cab_id -> { target_lat, target_lng, phase }
 _active_targets_lock = threading.Lock()
 active_cab_targets: Dict[int, Dict[str, Any]] = {}
 
-# -------------------------
-# Helpers
-# -------------------------
+# Simulator control
+_SIM_SLEEP = 2.0
+_ARRIVE_THRESHOLD = 0.00025
+_STEP = 0.00025
+
+
 def log(*args, **kwargs):
     print("[backend]", *args, **kwargs)
 
 
+# -------------------------------------
+# Broadcast utilities
+# -------------------------------------
 def broadcast_to_all(message: dict):
-    """Send a JSON message to all connected WS clients (removes dead ones)."""
     text = json.dumps(message)
-    dead = []
-    with _clients_lock:
+    dead: List[Any] = []
+    with _ws_clients_lock:
         for ws in list(_ws_clients):
             try:
                 ws.send(text)
             except ConnectionClosed:
                 dead.append(ws)
             except Exception as e:
-                # if sending fails, drop client to keep things healthy
-                log("⚠️ Broadcast send failed:", e)
+                log("⚠ broadcast send failed:", e)
                 dead.append(ws)
         for ws in dead:
             try:
@@ -64,9 +67,9 @@ def broadcast_to_all(message: dict):
                 pass
 
 
-# -------------------------
+# -------------------------------------
 # HTTP API endpoints
-# -------------------------
+# -------------------------------------
 @app.route("/api/cabs", methods=["GET"])
 def api_get_cabs():
     try:
@@ -74,6 +77,31 @@ def api_get_cabs():
         return jsonify(cabs)
     except Exception as e:
         log("Error in /api/cabs:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cab_register", methods=["POST"])
+def api_cab_register():
+    data = request.get_json() or {}
+    required = ["cab_id", "name", "rto_number", "driver_name", "latitude", "longitude"]
+    if not all(k in data for k in required):
+        return jsonify({"error": "Missing cab data"}), 400
+
+    try:
+        cab_id = int(data["cab_id"])
+        name = data["name"]
+        rto = data["rto_number"]
+        driver = data["driver_name"]
+        lat = float(data["latitude"])
+        lng = float(data["longitude"])
+        status = data.get("status", "Available")
+
+        ok = db.add_cab(cab_id, name, rto, driver, lat, lng, status)
+        if ok:
+            return jsonify({"message": "Cab registered/updated"}), 201
+        return jsonify({"error": "DB insert failed"}), 500
+    except Exception as e:
+        log("Error in /api/cab_register:", e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -92,6 +120,8 @@ def api_find_cab():
 
         cabs = db.get_all_cabs()
         nearest = CabFinder.find_nearest_cab(cabs, start_lat, start_lng, num_cabs=3)
+        if not nearest:
+            return jsonify({"error": "No cabs available"}), 404
 
         options = []
         for cab, dist_km in nearest:
@@ -108,6 +138,7 @@ def api_find_cab():
 
         options.sort(key=lambda x: x["pickup_distance"])
         return jsonify({"available_cabs": options[:3]})
+
     except Exception as e:
         log("Error in /api/find_cab:", e)
         return jsonify({"error": str(e)}), 500
@@ -133,12 +164,9 @@ def api_book_cab():
         if not cab:
             return jsonify({"error": f"Cab {cab_id} not found"}), 404
 
-        # mark busy
         db.update_cab_status(cab_id, "Busy")
-        # store ride
         db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared)
 
-        # set active target -> pickup
         with _active_targets_lock:
             active_cab_targets[cab_id] = {
                 "target_lat": start_lat,
@@ -146,7 +174,6 @@ def api_book_cab():
                 "phase": "to_pickup"
             }
 
-        log(f"Booked cab {cab_id} -> moving to pickup {start_lat},{start_lng}")
         broadcast_to_all({
             "cab_id": cab_id,
             "status": "Enroute",
@@ -154,7 +181,6 @@ def api_book_cab():
             "target_lng": start_lng
         })
 
-        # calculate fare to return
         dist_km = calculate_distance(start_lat, start_lng, end_lat, end_lng)
         fare = calculate_fare(dist_km)
 
@@ -163,12 +189,7 @@ def api_book_cab():
             "cab": cab,
             "cab_id": cab_id,
             "status": "Enroute to Pickup",
-            "fare": fare,
-            "start_latitude": start_lat,
-            "start_longitude": start_lng,
-            "end_latitude": end_lat,
-            "end_longitude": end_lng,
-            "is_shared": is_shared
+            "fare": fare
         }), 200
 
     except Exception as e:
@@ -178,10 +199,6 @@ def api_book_cab():
 
 @app.route("/api/start_ride/<int:cab_id>", methods=["POST"])
 def api_start_ride(cab_id: int):
-    """
-    Called by client after driver has arrived and passenger confirmed boarding.
-    Switch target to destination and set status OnTrip.
-    """
     try:
         ride = db.get_ride_by_cab_id(cab_id)
         if not ride:
@@ -200,14 +217,12 @@ def api_start_ride(cab_id: int):
             }
 
         db.update_cab_status(cab_id, "OnTrip")
-
         broadcast_to_all({
             "cab_id": cab_id,
             "status": "OnTrip",
             "target_lat": float(end_lat),
             "target_lng": float(end_lng)
         })
-
         return jsonify({"message": "Ride started"}), 200
 
     except Exception as e:
@@ -217,9 +232,6 @@ def api_start_ride(cab_id: int):
 
 @app.route("/api/complete_ride/<int:cab_id>", methods=["GET"])
 def api_complete_ride(cab_id: int):
-    """
-    Mark the ride completed: set cab Available, update location to destination, remove active target
-    """
     try:
         updated = db.update_cab_status(cab_id, "Available")
         if not updated:
@@ -233,7 +245,6 @@ def api_complete_ride(cab_id: int):
             try:
                 db.update_cab_location(cab_id, float(dest_lat), float(dest_lng))
             except Exception:
-                # fallback: try raw values
                 try:
                     db.update_cab_location(cab_id, dest_lat, dest_lng)
                 except Exception:
@@ -256,42 +267,32 @@ def api_complete_ride(cab_id: int):
         return jsonify({"error": str(e)}), 500
 
 
-# -------------------------
+# -------------------------------------
 # WebSocket route (flask-sock)
-# -------------------------
+# -------------------------------------
 @sock.route("/cab_location_updates")
 def ws_cab_updates(ws):
-    """
-    Accept WebSocket connections and keep them in _ws_clients list for server-side pushes.
-    We run a small receive loop to detect closed connections; sending is done by broadcast_to_all().
-    """
     log("WS client connected")
-    with _clients_lock:
+    with _ws_clients_lock:
         _ws_clients.append(ws)
 
     try:
-        # Try to read messages (if any); this also helps detect client disconnects.
         while True:
             try:
-                # some flask-sock implementations support a timeout param. We'll try it and ignore if not supported.
-                msg = None
+                # Non-blocking receive pattern if supported; otherwise block until message
                 try:
                     msg = ws.receive(timeout=5)
                 except TypeError:
-                    # receive() may not accept timeout; call without it (blocking) but only if client actually sends.
                     msg = ws.receive()
                 if msg is None:
-                    # no message received (timeout) — continue; keep connection alive
                     continue
-                # Optionally handle inbound messages from client if needed
-                # log("WS received:", msg)
+                # optional: process inbound messages if needed
             except ConnectionClosed:
                 break
             except Exception:
-                # keep loop alive; if ws becomes invalid, send on broadcast will remove it
                 time.sleep(0.1)
     finally:
-        with _clients_lock:
+        with _ws_clients_lock:
             try:
                 _ws_clients.remove(ws)
             except ValueError:
@@ -299,25 +300,15 @@ def ws_cab_updates(ws):
         log("WS client disconnected")
 
 
-# -------------------------
-# Simulator thread
-# -------------------------
+# -------------------------------------
+# Background simulator (thread)
+# -------------------------------------
 def simulate_cab_movements_thread():
-    """
-    Background simulator that:
-      - moves cabs toward active targets (pickup or destination)
-      - updates DB location
-      - broadcasts live updates to connected clients
-    """
     log("Simulator started")
-    SLEEP_INTERVAL = 2.0
-    ARRIVE_THRESHOLD = 0.00025
-    STEP = 0.00025
-
     while True:
         try:
             cabs = db.get_all_cabs()
-            updates = []
+            updates: List[Dict[str, Any]] = []
 
             for c in cabs:
                 try:
@@ -328,62 +319,40 @@ def simulate_cab_movements_thread():
                 except Exception:
                     continue
 
-                moved = False
-
                 with _active_targets_lock:
                     target_info = active_cab_targets.get(cab_id)
 
                 if target_info:
-                    target_lat = float(target_info["target_lat"])
-                    target_lng = float(target_info["target_lng"])
+                    tlat = float(target_info["target_lat"])
+                    tlng = float(target_info["target_lng"])
                     phase = target_info.get("phase", "to_pickup")
 
-                    dlat = target_lat - lat
-                    dlng = target_lng - lng
+                    dlat = tlat - lat
+                    dlng = tlng - lng
                     dist = (dlat * dlat + dlng * dlng) ** 0.5
 
-                    if dist <= ARRIVE_THRESHOLD:
-                        # arrived at target
+                    if dist <= _ARRIVE_THRESHOLD:
                         if phase == "to_pickup":
                             log(f"Cab {cab_id} reached pickup")
-                            db.update_cab_status(cab_id, "Arrived", latitude=target_lat, longitude=target_lng)
-                            # keep target until client calls /start_ride (per Option A)
-                            # broadcast arrival
-                            broadcast_to_all({
-                                "cab_id": cab_id,
-                                "status": "Arrived",
-                                "latitude": target_lat,
-                                "longitude": target_lng
-                            })
-                        elif phase == "to_destination":
+                            db.update_cab_status(cab_id, "Arrived", latitude=tlat, longitude=tlng)
+                            # keep target until client calls start_ride
+                            broadcast_to_all({"cab_id": cab_id, "status": "Arrived", "latitude": tlat, "longitude": tlng})
+                        else:
                             log(f"Cab {cab_id} reached destination")
-                            db.update_cab_status(cab_id, "Arrived", latitude=target_lat, longitude=target_lng)
-                            db.update_cab_location(cab_id, target_lat, target_lng)
-                            broadcast_to_all({
-                                "cab_id": cab_id,
-                                "status": "ArrivedDestination",
-                                "latitude": target_lat,
-                                "longitude": target_lng
-                            })
-                        moved = False
+                            db.update_cab_status(cab_id, "Arrived", latitude=tlat, longitude=tlng)
+                            db.update_cab_location(cab_id, tlat, tlng)
+                            broadcast_to_all({"cab_id": cab_id, "status": "ArrivedDestination", "latitude": tlat, "longitude": tlng})
                     else:
-                        # step toward target
-                        lat += STEP * (dlat / dist)
-                        lng += STEP * (dlng / dist)
+                        # move step
+                        lat += _STEP * (dlat / dist)
+                        lng += _STEP * (dlng / dist)
                         try:
                             db.update_cab_location(cab_id, lat, lng)
                         except Exception:
                             pass
-                        moved = True
-                        updates.append({
-                            "cab_id": cab_id,
-                            "latitude": lat,
-                            "longitude": lng,
-                            "status": "Enroute" if phase == "to_pickup" else "OnTrip"
-                        })
-
+                        updates.append({"cab_id": cab_id, "latitude": lat, "longitude": lng, "status": "Enroute" if phase == "to_pickup" else "OnTrip"})
                 else:
-                    # idle small drift
+                    # idle drift
                     if status == "Available":
                         lat += random.uniform(-0.00015, 0.00015)
                         lng += random.uniform(-0.00015, 0.00015)
@@ -391,37 +360,29 @@ def simulate_cab_movements_thread():
                             db.update_cab_location(cab_id, lat, lng)
                         except Exception:
                             pass
-                    updates.append({
-                        "cab_id": cab_id,
-                        "latitude": lat,
-                        "longitude": lng,
-                        "status": status
-                    })
+                    updates.append({"cab_id": cab_id, "latitude": lat, "longitude": lng, "status": status})
 
-            # broadcast batched updates
+            # broadcast
             for u in updates:
                 broadcast_to_all(u)
 
         except Exception as e:
-            log("Simulator loop error:", e)
+            log("Simulator error:", e)
 
-        time.sleep(SLEEP_INTERVAL)
+        time.sleep(_SIM_SLEEP)
 
 
-# Start simulator thread (daemon)
+# Start simulator thread
 _sim_thread = threading.Thread(target=simulate_cab_movements_thread, daemon=True)
 _sim_thread.start()
 log("Simulator thread spawned")
 
 
-# -------------------------
-# ASGI wrapper for uvicorn/Render
-# -------------------------
+# ASGI wrapper for uvicorn/render
 asgi_app = WsgiToAsgi(app)
 
-# if you run locally with python backend/app.py, this will not be used in deployment.
+
+# Local running convenience
 if __name__ == "__main__":
-    # Local quick-run for convenience (still WSGI)
-    from werkzeug.serving import run_simple
-    log("Starting local development server on http://127.0.0.1:5001")
-    run_simple("0.0.0.0", 5001, app, use_reloader=True, threaded=True)
+    log("Starting local dev server at http://127.0.0.1:5001 (WSGI)")
+    app.run(host="0.0.0.0", port=5001, debug=True)
