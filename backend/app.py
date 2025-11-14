@@ -192,12 +192,12 @@ def reset_cab_status():
 @app.route('/api/complete_ride/<int:cab_id>', methods=['GET'])
 def complete_ride(cab_id):
     try:
-        # 1️⃣ Update cab status safely
+        # 1️⃣ Update cab status
         updated = db.update_cab_status(cab_id, 'Available')
         if not updated:
-            return jsonify({'error': 'Cab not found or update failed'}), 400
+            return jsonify({'error': 'Cab update failed'}), 400
 
-        # 2️⃣ Try fetching ride details (may not exist)
+        # 2️⃣ Fetch last ride
         ride_details = db.get_ride_by_cab_id(cab_id)
 
         destination_lat = None
@@ -207,18 +207,18 @@ def complete_ride(cab_id):
             destination_lat = ride_details.get('end_latitude')
             destination_lng = ride_details.get('end_longitude')
 
-            # Update cab location ONLY if valid
-            if destination_lat is not None and destination_lng is not None:
+            # update cab location only if both are valid floats
+            if destination_lat not in (None, "") and destination_lng not in (None, ""):
                 db.update_cab_location(cab_id, destination_lat, destination_lng)
 
-        # 3️⃣ Safely remove active target
+        # 3️⃣ Remove active route
         if cab_id in active_cab_targets:
             active_cab_targets.pop(cab_id, None)
 
-        # 4️⃣ SAFE broadcast
+        # 4️⃣ SAFE BROADCAST
         broadcast_to_all({
             "cab_id": cab_id,
-            "latitude": destination_lat or 0.0,     # default fallback
+            "latitude": destination_lat or 0.0,
             "longitude": destination_lng or 0.0,
             "status": "Available"
         })
@@ -226,7 +226,7 @@ def complete_ride(cab_id):
         return jsonify({'message': f'Cab {cab_id} set to Available'}), 200
 
     except Exception as e:
-        print("🔥 ERROR in /complete_ride:", e)
+        print("🔥 ERROR in complete_ride():", e)
         return jsonify({'error': str(e)}), 500
 
 

@@ -201,6 +201,22 @@ class DatabaseUtils:
         finally:
             self.disconnect()
 
+    def reset_all_cab_statuses(self):
+        """
+        Reset the status of all cabs to 'Available'.
+        """
+        if not self.connect():
+            return False
+        try:
+            self.cursor.execute("UPDATE cabs SET status = 'Available'")
+            self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Error resetting all cab statuses: {e}")
+            return False
+        finally:
+            self.disconnect()
+
     def add_cab(self, cab_id, name, rto_number, driver_name, latitude, longitude, status):
         """
         Add a new cab to the database or update an existing one.
@@ -235,6 +251,40 @@ class DatabaseUtils:
         except sqlite3.Error as e:
             print(f"Error adding ride: {e}")
             return False
+        finally:
+            self.disconnect()
+
+    def get_ride_by_cab_id(self, cab_id):
+        """
+        Get the most recent ride for a specific cab from the database.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute("""
+                SELECT id, cab_id, user_start_x, user_start_y, user_end_x, user_end_y, timestamp, shared
+                FROM rides
+                WHERE cab_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (cab_id,))
+            row = self.cursor.fetchone()
+            if row:
+                return {
+                    'id': row[0],
+                    'cab_id': row[1],
+                    'start_latitude': row[2],
+                    'start_longitude': row[3],
+                    'end_latitude': row[4],
+                    'end_longitude': row[5],
+                    'timestamp': row[6],
+                    'shared': bool(row[7])
+                }
+            return None
+        except sqlite3.Error as e:
+            print(f"Error fetching ride by cab ID: {e}")
+            return None
         finally:
             self.disconnect()
 
