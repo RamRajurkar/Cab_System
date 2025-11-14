@@ -1,388 +1,271 @@
-# /backend/app.py
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from flask_sock import Sock
+from dotenv import load_dotenv
 import json
 import random
 import threading
 import time
-from typing import Any, Dict, List
-
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from flask_sock import Sock, ConnectionClosed
-from asgiref.wsgi import WsgiToAsgi
-from dotenv import load_dotenv
 
 from dsa.db_utils import DatabaseUtils
 from dsa.heap_utils import CabFinder
 from dsa.utils import calculate_distance, calculate_fare
 
+# ------------------------------------------------------------------
+# INITIAL SETUP
+# ------------------------------------------------------------------
 load_dotenv()
 
-# -------------------------------------
-# Flask + Sock setup
-# -------------------------------------
 app = Flask(__name__)
 CORS(app)
+
+# WebSocket (flask-sock)
 sock = Sock(app)
 
-# Database helper (uses per-call connections; thread-safe)
-db = DatabaseUtils(db_path="database.db")
+# Database
+db = DatabaseUtils(db_path='database.db')
 
-# Thread-safe websocket client list
-_ws_clients_lock = threading.Lock()
-_ws_clients: List[Any] = []
+# Connected WebSocket clients
+ws_clients = []
 
-# Active targets: cab_id -> { target_lat, target_lng, phase }
-_active_targets_lock = threading.Lock()
-active_cab_targets: Dict[int, Dict[str, Any]] = {}
+# cab_id → {target_lat, target_lng, stage}
+active_cab_targets = {}
 
-# Simulator control
-_SIM_SLEEP = 2.0
-_ARRIVE_THRESHOLD = 0.00025
-_STEP = 0.00025
+print("[backend] Simulator loaded")
 
 
-def log(*args, **kwargs):
-    print("[backend]", *args, **kwargs)
-
-
-# -------------------------------------
-# Broadcast utilities
-# -------------------------------------
-def broadcast_to_all(message: dict):
-    text = json.dumps(message)
-    dead: List[Any] = []
-    with _ws_clients_lock:
-        for ws in list(_ws_clients):
-            try:
-                ws.send(text)
-            except ConnectionClosed:
-                dead.append(ws)
-            except Exception as e:
-                log("⚠ broadcast send failed:", e)
-                dead.append(ws)
-        for ws in dead:
-            try:
-                _ws_clients.remove(ws)
-            except ValueError:
-                pass
-
-
-# -------------------------------------
-# HTTP API endpoints
-# -------------------------------------
-@app.route("/api/cabs", methods=["GET"])
-def api_get_cabs():
-    try:
-        cabs = db.get_all_cabs()
-        return jsonify(cabs)
-    except Exception as e:
-        log("Error in /api/cabs:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/cab_register", methods=["POST"])
-def api_cab_register():
-    data = request.get_json() or {}
-    required = ["cab_id", "name", "rto_number", "driver_name", "latitude", "longitude"]
-    if not all(k in data for k in required):
-        return jsonify({"error": "Missing cab data"}), 400
-
-    try:
-        cab_id = int(data["cab_id"])
-        name = data["name"]
-        rto = data["rto_number"]
-        driver = data["driver_name"]
-        lat = float(data["latitude"])
-        lng = float(data["longitude"])
-        status = data.get("status", "Available")
-
-        ok = db.add_cab(cab_id, name, rto, driver, lat, lng, status)
-        if ok:
-            return jsonify({"message": "Cab registered/updated"}), 201
-        return jsonify({"error": "DB insert failed"}), 500
-    except Exception as e:
-        log("Error in /api/cab_register:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/find_cab", methods=["POST"])
-def api_find_cab():
-    data = request.json or {}
-    required = ["start_latitude", "start_longitude", "end_latitude", "end_longitude"]
-    if not all(k in data for k in required):
-        return jsonify({"error": "Missing coordinates"}), 400
-
-    try:
-        start_lat = float(data["start_latitude"])
-        start_lng = float(data["start_longitude"])
-        end_lat = float(data["end_latitude"])
-        end_lng = float(data["end_longitude"])
-
-        cabs = db.get_all_cabs()
-        nearest = CabFinder.find_nearest_cab(cabs, start_lat, start_lng, num_cabs=3)
-        if not nearest:
-            return jsonify({"error": "No cabs available"}), 404
-
-        options = []
-        for cab, dist_km in nearest:
-            total_km = calculate_distance(start_lat, start_lng, end_lat, end_lng)
-            fare = calculate_fare(total_km)
-            options.append({
-                "cab": cab,
-                "pickup_distance": dist_km * 1000,
-                "total_distance": total_km * 1000,
-                "fare": fare,
-                "is_shared": False,
-                "status": cab.get("status", "Available"),
-            })
-
-        options.sort(key=lambda x: x["pickup_distance"])
-        return jsonify({"available_cabs": options[:3]})
-
-    except Exception as e:
-        log("Error in /api/find_cab:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/book_cab", methods=["POST"])
-def api_book_cab():
-    data = request.json or {}
-    required = ["cab_id", "start_latitude", "start_longitude", "end_latitude", "end_longitude"]
-    if not all(k in data for k in required):
-        return jsonify({"error": "Missing booking info"}), 400
-
-    try:
-        cab_id = int(data["cab_id"])
-        start_lat = float(data["start_latitude"])
-        start_lng = float(data["start_longitude"])
-        end_lat = float(data["end_latitude"])
-        end_lng = float(data["end_longitude"])
-        is_shared = bool(data.get("is_shared", False))
-
-        cabs = db.get_all_cabs()
-        cab = next((c for c in cabs if int(c["cab_id"]) == cab_id), None)
-        if not cab:
-            return jsonify({"error": f"Cab {cab_id} not found"}), 404
-
-        db.update_cab_status(cab_id, "Busy")
-        db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared)
-
-        with _active_targets_lock:
-            active_cab_targets[cab_id] = {
-                "target_lat": start_lat,
-                "target_lng": start_lng,
-                "phase": "to_pickup"
-            }
-
-        broadcast_to_all({
-            "cab_id": cab_id,
-            "status": "Enroute",
-            "target_lat": start_lat,
-            "target_lng": start_lng
-        })
-
-        dist_km = calculate_distance(start_lat, start_lng, end_lat, end_lng)
-        fare = calculate_fare(dist_km)
-
-        return jsonify({
-            "message": "Ride booked successfully",
-            "cab": cab,
-            "cab_id": cab_id,
-            "status": "Enroute to Pickup",
-            "fare": fare
-        }), 200
-
-    except Exception as e:
-        log("Error in /api/book_cab:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/start_ride/<int:cab_id>", methods=["POST"])
-def api_start_ride(cab_id: int):
-    try:
-        ride = db.get_ride_by_cab_id(cab_id)
-        if not ride:
-            return jsonify({"error": "No ride found for cab"}), 404
-
-        end_lat = ride.get("end_latitude")
-        end_lng = ride.get("end_longitude")
-        if end_lat is None or end_lng is None:
-            return jsonify({"error": "Invalid ride destination"}), 400
-
-        with _active_targets_lock:
-            active_cab_targets[cab_id] = {
-                "target_lat": float(end_lat),
-                "target_lng": float(end_lng),
-                "phase": "to_destination"
-            }
-
-        db.update_cab_status(cab_id, "OnTrip")
-        broadcast_to_all({
-            "cab_id": cab_id,
-            "status": "OnTrip",
-            "target_lat": float(end_lat),
-            "target_lng": float(end_lng)
-        })
-        return jsonify({"message": "Ride started"}), 200
-
-    except Exception as e:
-        log("Error in /api/start_ride:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/complete_ride/<int:cab_id>", methods=["GET"])
-def api_complete_ride(cab_id: int):
-    try:
-        updated = db.update_cab_status(cab_id, "Available")
-        if not updated:
-            return jsonify({"error": "Failed to update cab status"}), 400
-
-        ride = db.get_ride_by_cab_id(cab_id)
-        dest_lat = ride.get("end_latitude") if ride else None
-        dest_lng = ride.get("end_longitude") if ride else None
-
-        if dest_lat is not None and dest_lng is not None:
-            try:
-                db.update_cab_location(cab_id, float(dest_lat), float(dest_lng))
-            except Exception:
-                try:
-                    db.update_cab_location(cab_id, dest_lat, dest_lng)
-                except Exception:
-                    pass
-
-        with _active_targets_lock:
-            active_cab_targets.pop(cab_id, None)
-
-        broadcast_to_all({
-            "cab_id": cab_id,
-            "status": "Available",
-            "latitude": float(dest_lat) if dest_lat else 0.0,
-            "longitude": float(dest_lng) if dest_lng else 0.0
-        })
-
-        return jsonify({"message": f"Cab {cab_id} set to Available"}), 200
-
-    except Exception as e:
-        log("Error in /api/complete_ride:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-# -------------------------------------
-# WebSocket route (flask-sock)
-# -------------------------------------
-@sock.route("/cab_location_updates")
-def ws_cab_updates(ws):
-    log("WS client connected")
-    with _ws_clients_lock:
-        _ws_clients.append(ws)
+# ------------------------------------------------------------------
+# WEBSOCKET ENDPOINT
+# ------------------------------------------------------------------
+@sock.route('/cab_location_updates')
+def cab_location_updates(ws):
+    print("🟢 WebSocket client connected")
+    ws_clients.append(ws)
 
     try:
         while True:
-            try:
-                # Non-blocking receive pattern if supported; otherwise block until message
-                try:
-                    msg = ws.receive(timeout=5)
-                except TypeError:
-                    msg = ws.receive()
-                if msg is None:
-                    continue
-                # optional: process inbound messages if needed
-            except ConnectionClosed:
+            message = ws.receive()
+            if message is None:
                 break
-            except Exception:
-                time.sleep(0.1)
+    except Exception:
+        pass
     finally:
-        with _ws_clients_lock:
-            try:
-                _ws_clients.remove(ws)
-            except ValueError:
-                pass
-        log("WS client disconnected")
+        print("🔴 WebSocket disconnected")
+        if ws in ws_clients:
+            ws_clients.remove(ws)
 
 
-# -------------------------------------
-# Background simulator (thread)
-# -------------------------------------
-def simulate_cab_movements_thread():
-    log("Simulator started")
-    while True:
+# Broadcast utility
+def ws_broadcast(message: dict):
+    dead = []
+    for client in ws_clients:
         try:
-            cabs = db.get_all_cabs()
-            updates: List[Dict[str, Any]] = []
+            client.send(json.dumps(message))
+        except:
+            dead.append(client)
 
-            for c in cabs:
-                try:
-                    cab_id = int(c["cab_id"])
-                    lat = float(c.get("latitude", 0.0))
-                    lng = float(c.get("longitude", 0.0))
-                    status = c.get("status", "Available")
-                except Exception:
-                    continue
+    for d in dead:
+        if d in ws_clients:
+            ws_clients.remove(d)
 
-                with _active_targets_lock:
-                    target_info = active_cab_targets.get(cab_id)
 
-                if target_info:
-                    tlat = float(target_info["target_lat"])
-                    tlng = float(target_info["target_lng"])
-                    phase = target_info.get("phase", "to_pickup")
+# ------------------------------------------------------------------
+# REST API: Get all cabs
+# ------------------------------------------------------------------
+@app.route('/api/cabs', methods=['GET'])
+def get_cabs():
+    return jsonify(db.get_all_cabs())
 
-                    dlat = tlat - lat
-                    dlng = tlng - lng
-                    dist = (dlat * dlat + dlng * dlng) ** 0.5
 
-                    if dist <= _ARRIVE_THRESHOLD:
-                        if phase == "to_pickup":
-                            log(f"Cab {cab_id} reached pickup")
-                            db.update_cab_status(cab_id, "Arrived", latitude=tlat, longitude=tlng)
-                            # keep target until client calls start_ride
-                            broadcast_to_all({"cab_id": cab_id, "status": "Arrived", "latitude": tlat, "longitude": tlng})
-                        else:
-                            log(f"Cab {cab_id} reached destination")
-                            db.update_cab_status(cab_id, "Arrived", latitude=tlat, longitude=tlng)
-                            db.update_cab_location(cab_id, tlat, tlng)
-                            broadcast_to_all({"cab_id": cab_id, "status": "ArrivedDestination", "latitude": tlat, "longitude": tlng})
-                    else:
-                        # move step
-                        lat += _STEP * (dlat / dist)
-                        lng += _STEP * (dlng / dist)
-                        try:
-                            db.update_cab_location(cab_id, lat, lng)
-                        except Exception:
-                            pass
-                        updates.append({"cab_id": cab_id, "latitude": lat, "longitude": lng, "status": "Enroute" if phase == "to_pickup" else "OnTrip"})
+# ------------------------------------------------------------------
+# REST API: Register cab
+# ------------------------------------------------------------------
+@app.route('/api/cab_register', methods=['POST'])
+def cab_register():
+    data = request.get_json()
+    required = ["cab_id", "name", "rto_number", "driver_name", "latitude", "longitude"]
+
+    if not all(k in data for k in required):
+        return jsonify({"error": "Missing fields"}), 400
+
+    ok = db.add_cab(
+        data["cab_id"], data["name"], data["rto_number"], data["driver_name"],
+        data["latitude"], data["longitude"], "Available"
+    )
+
+    if not ok:
+        return jsonify({"error": "Failed"}), 500
+
+    return jsonify({"message": "Cab registered"}), 201
+
+
+# ------------------------------------------------------------------
+# REST API: Find nearest cab
+# ------------------------------------------------------------------
+@app.route('/api/find_cab', methods=['POST'])
+def find_cab():
+    data = request.json
+    keys = ["start_latitude", "start_longitude", "end_latitude", "end_longitude"]
+
+    if not all(k in data for k in keys):
+        return jsonify({"error": "Missing coordinates"}), 400
+
+    cabs = db.get_all_cabs()
+
+    nearest = CabFinder.find_nearest_cab(
+        cabs,
+        data["start_latitude"],
+        data["start_longitude"],
+        num_cabs=3
+    )
+
+    if not nearest:
+        return jsonify({"error": "No cabs available"}), 404
+
+    results = []
+    for cab, dist in nearest:
+        total_dist = calculate_distance(
+            data["start_latitude"],
+            data["start_longitude"],
+            data["end_latitude"],
+            data["end_longitude"]
+        )
+        fare = calculate_fare(total_dist)
+
+        results.append({
+            "cab": cab,
+            "pickup_distance": dist * 1000,
+            "fare": fare,
+            "status": "Available"
+        })
+
+    return jsonify({"available_cabs": results})
+
+
+# ------------------------------------------------------------------
+# REST API: Book cab
+# ------------------------------------------------------------------
+@app.route('/api/book_cab', methods=['POST'])
+def book_cab():
+    data = request.json
+
+    required = [
+        "cab_id", "start_latitude", "start_longitude",
+        "end_latitude", "end_longitude"
+    ]
+    if not all(k in data for k in required):
+        return jsonify({"error": "Missing data"}), 400
+
+    cab_id = data["cab_id"]
+
+    db.update_cab_status(cab_id, "Busy")
+    db.add_ride(
+        cab_id,
+        data["start_latitude"], data["start_longitude"],
+        data["end_latitude"], data["end_longitude"],
+        False
+    )
+
+    active_cab_targets[cab_id] = {
+        "target_lat": data["start_latitude"],
+        "target_lng": data["start_longitude"],
+        "stage": "to_pickup"
+    }
+
+    return jsonify({"message": "Ride booked", "cab_id": cab_id})
+
+
+# ------------------------------------------------------------------
+# REST API: Complete Ride
+# ------------------------------------------------------------------
+@app.route('/api/complete_ride/<int:cab_id>', methods=['GET'])
+def complete_ride(cab_id):
+    db.update_cab_status(cab_id, "Available")
+
+    ride = db.get_ride_by_cab_id(cab_id)
+    dest_lat = ride["end_latitude"] if ride else 0
+    dest_lng = ride["end_longitude"] if ride else 0
+
+    db.update_cab_location(cab_id, dest_lat, dest_lng)
+
+    if cab_id in active_cab_targets:
+        active_cab_targets.pop(cab_id)
+
+    ws_broadcast({
+        "cab_id": cab_id,
+        "latitude": dest_lat,
+        "longitude": dest_lng,
+        "status": "Available"
+    })
+
+    return jsonify({"message": "Ride Completed"})
+
+
+# ------------------------------------------------------------------
+# SIMULATOR (runs on separate thread)
+# ------------------------------------------------------------------
+def simulator_loop():
+    print("[backend] Simulator started")
+
+    while True:
+        cabs = db.get_all_cabs()
+
+        for cab in cabs:
+            cab_id = cab["cab_id"]
+            lat = float(cab["latitude"])
+            lng = float(cab["longitude"])
+            status = cab["status"]
+
+            # Move to pickup
+            if cab_id in active_cab_targets:
+                t = active_cab_targets[cab_id]
+                tlat, tlng = float(t["target_lat"]), float(t["target_lng"])
+
+                dlat = tlat - lat
+                dlng = tlng - lng
+                dist = (dlat**2 + dlng**2) ** 0.5
+
+                if dist < 0.00025:
+                    db.update_cab_status(cab_id, "Arrived")
+                    active_cab_targets.pop(cab_id)
+
+                    ws_broadcast({"cab_id": cab_id, "status": "Arrived"})
                 else:
-                    # idle drift
-                    if status == "Available":
-                        lat += random.uniform(-0.00015, 0.00015)
-                        lng += random.uniform(-0.00015, 0.00015)
-                        try:
-                            db.update_cab_location(cab_id, lat, lng)
-                        except Exception:
-                            pass
-                    updates.append({"cab_id": cab_id, "latitude": lat, "longitude": lng, "status": status})
+                    step = 0.0002
+                    lat += step * (dlat / dist)
+                    lng += step * (dlng / dist)
+                    db.update_cab_location(cab_id, lat, lng)
 
-            # broadcast
-            for u in updates:
-                broadcast_to_all(u)
+                ws_broadcast({
+                    "cab_id": cab_id,
+                    "latitude": lat,
+                    "longitude": lng,
+                    "status": status
+                })
 
-        except Exception as e:
-            log("Simulator error:", e)
+            # Idle drift
+            elif status == "Available":
+                lat += random.uniform(-0.00015, 0.00015)
+                lng += random.uniform(-0.00015, 0.00015)
+                db.update_cab_location(cab_id, lat, lng)
 
-        time.sleep(_SIM_SLEEP)
+                ws_broadcast({
+                    "cab_id": cab_id,
+                    "latitude": lat,
+                    "longitude": lng,
+                    "status": status
+                })
 
-
-# Start simulator thread
-_sim_thread = threading.Thread(target=simulate_cab_movements_thread, daemon=True)
-_sim_thread.start()
-log("Simulator thread spawned")
-
-
-# ASGI wrapper for uvicorn/render
-asgi_app = WsgiToAsgi(app)
+        time.sleep(2)
 
 
-# Local running convenience
+# Start simulation in background thread
+threading.Thread(target=simulator_loop, daemon=True).start()
+print("[backend] Simulator thread spawned")
+
+
+# ------------------------------------------------------------------
+# Entry for Hypercorn
+# ------------------------------------------------------------------
 if __name__ == "__main__":
-    log("Starting local dev server at http://127.0.0.1:5001 (WSGI)")
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    print("⚠️ Run using: hypercorn app:app --bind 0.0.0.0:5001")
