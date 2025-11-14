@@ -1,3 +1,4 @@
+# app.py
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from flask_sockets import Sockets
@@ -8,7 +9,6 @@ import gevent
 from gevent import spawn
 from dsa.db_utils import DatabaseUtils
 from dsa.heap_utils import CabFinder
-from dsa.graph import RouteOptimizer
 from dsa.utils import calculate_distance, calculate_fare
 
 # ---------------------------------------------
@@ -21,16 +21,18 @@ sockets = Sockets(app)
 db = DatabaseUtils(db_path='database.db')
 
 clients = []  # connected websocket clients
-active_cab_targets = {}  # store pickup targets for booked cabs
-
+active_cab_targets = {}  # { cab_id: { target_lat, target_lng, phase } }
 
 # ---------------------------------------------
-# CAB MANAGEMENT ROUTES
+# ROUTES: CABS, REGISTER
 # ---------------------------------------------
 @app.route('/api/cabs', methods=['GET'])
 def get_cabs():
-    cabs = db.get_all_cabs()
-    return jsonify(cabs)
+    try:
+        cabs = db.get_all_cabs()
+        return jsonify(cabs)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/cab_register', methods=['POST'])
@@ -57,25 +59,37 @@ def cab_register():
         conn.commit()
         return jsonify({'message': 'Cab registered/updated successfully'}), 201
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return jsonify({'message': 'Cab registration/update failed', 'error': str(e)}), 500
     finally:
         db.disconnect()
 
 
 # ---------------------------------------------
-# CAB LOCATION UPDATES VIA SOCKET
+# WEBSOCKET ENDPOINT
 # ---------------------------------------------
 @sockets.route('/cab_location_updates')
 def cab_location_updates(ws):
+    """WebSocket endpoint clients connect to for live cab updates."""
     clients.append(ws)
-    print("🟢 Client connected to /cab_location_updates")
-    while not ws.closed:
-        gevent.sleep(0.1)
+    print("🟢 Client connected to /cab_location_updates (total clients: {})".format(len(clients)))
+    try:
+        # Keep connection alive
+        while not ws.closed:
+            gevent.sleep(0.1)
+    finally:
+        try:
+            clients.remove(ws)
+        except Exception:
+            pass
+        print("🔴 Client disconnected (remaining: {})".format(len(clients)))
 
 
 # ---------------------------------------------
-# CAB FINDING / BOOKING
+# FIND & BOOK
 # ---------------------------------------------
 @app.route('/api/find_cab', methods=['POST'])
 def find_cab():
@@ -88,32 +102,35 @@ def find_cab():
     if not all([user_start_latitude, user_start_longitude, user_end_latitude, user_end_longitude]):
         return jsonify({'error': 'Missing coordinates'}), 400
 
-    cabs = db.get_all_cabs()
-    nearest_cabs_info = CabFinder.find_nearest_cab(
-        cabs, user_start_latitude, user_start_longitude, num_cabs=3
-    )
-
-    available_options = []
-    for cab, distance in nearest_cabs_info:
-        total_distance_km = calculate_distance(
-            user_start_latitude, user_start_longitude,
-            user_end_latitude, user_end_longitude
+    try:
+        cabs = db.get_all_cabs()
+        nearest_cabs_info = CabFinder.find_nearest_cab(
+            cabs, user_start_latitude, user_start_longitude, num_cabs=3
         )
-        fare = calculate_fare(total_distance_km)
-        available_options.append({
-            'cab': cab,
-            'pickup_distance': distance * 1000,
-            'is_shared': False,
-            'status': 'Available',
-            'total_distance': total_distance_km * 1000,
-            'fare': fare
-        })
 
-    if not available_options:
-        return jsonify({'error': 'No cab available'}), 404
+        available_options = []
+        for cab, distance in nearest_cabs_info:
+            total_distance_km = calculate_distance(
+                user_start_latitude, user_start_longitude,
+                user_end_latitude, user_end_longitude
+            )
+            fare = calculate_fare(total_distance_km)
+            available_options.append({
+                'cab': cab,
+                'pickup_distance': distance * 1000,
+                'is_shared': False,
+                'status': cab.get('status', 'Available'),
+                'total_distance': total_distance_km * 1000,
+                'fare': fare
+            })
 
-    available_options.sort(key=lambda x: x['pickup_distance'])
-    return jsonify({'available_cabs': available_options[:3]})
+        if not available_options:
+            return jsonify({'error': 'No cab available'}), 404
+
+        available_options.sort(key=lambda x: x['pickup_distance'])
+        return jsonify({'available_cabs': available_options[:3]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/book_cab', methods=['POST'])
@@ -129,202 +146,288 @@ def book_cab():
     if not all([cab_id, start_lat, start_lng, end_lat, end_lng]):
         return jsonify({'error': 'Missing booking information'}), 400
 
-    cabs = db.get_all_cabs()
-    cab = next((c for c in cabs if c['cab_id'] == cab_id), None)
-    if not cab:
-        return jsonify({'error': f'Cab {cab_id} not found'}), 404
+    try:
+        cabs = db.get_all_cabs()
+        cab = next((c for c in cabs if c['cab_id'] == cab_id), None)
+        if not cab:
+            return jsonify({'error': f'Cab {cab_id} not found'}), 404
 
-    db.update_cab_status(cab_id, 'Busy' if not is_shared else 'Shared')
+        # Mark cab Busy / Shared
+        db.update_cab_status(cab_id, 'Busy' if not is_shared else 'Shared')
 
-    distance = calculate_distance(start_lat, start_lng, end_lat, end_lng)
-    fare = calculate_fare(distance)
-    db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared)
+        distance = calculate_distance(start_lat, start_lng, end_lat, end_lng)
+        fare = calculate_fare(distance)
+        db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared)
 
-    # 🎯 assign movement target
-    active_cab_targets[cab_id] = {
-        "target_lat": start_lat,
-        "target_lng": start_lng,
-        "status": "enroute"
-    }
+        # assign movement target to pickup (phase: to_pickup)
+        active_cab_targets[cab_id] = {
+            "target_lat": float(start_lat),
+            "target_lng": float(start_lng),
+            "phase": "to_pickup"
+        }
 
-    return jsonify({
-        'message': 'Ride booked successfully!',
-        'cab': cab,
-        'cab_id': cab_id,
-        'status': 'Enroute to Pickup',
-        'fare': fare,
-        'start_latitude': start_lat,
-        'start_longitude': start_lng,
-        'end_latitude': end_lat,
-        'end_longitude': end_lng,
-        'is_shared': is_shared
-    })
+        return jsonify({
+            'message': 'Ride booked successfully!',
+            'cab': cab,
+            'cab_id': cab_id,
+            'status': 'Enroute to Pickup',
+            'fare': fare,
+            'start_latitude': start_lat,
+            'start_longitude': start_lng,
+            'end_latitude': end_lat,
+            'end_longitude': end_lng,
+            'is_shared': is_shared
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ---------------------------------------------
-# COMPLETE RIDE
+# RESET & COMPLETE
 # ---------------------------------------------
 @app.route('/api/reset_cab_status', methods=['POST'])
 def reset_cab_status():
     data = request.get_json()
     cab_id = data.get('cab_id')
-
     try:
         if cab_id:
-            # Reset status for a specific cab
             updated = db.update_cab_status(cab_id, 'Available')
             if not updated:
                 return jsonify({'error': f'Cab {cab_id} not found or update failed'}), 404
             message = f'Cab {cab_id} status reset to Available'
         else:
-            # Reset status for all cabs
             db.reset_all_cab_statuses()
             message = 'All cab statuses reset to Available'
-
         return jsonify({'message': message}), 200
-
     except Exception as e:
-        print(f"🔥 ERROR in /api/reset_cab_status: {e}")
         return jsonify({'error': str(e)}), 500
-
 
 
 @app.route('/api/complete_ride/<int:cab_id>', methods=['GET'])
 def complete_ride(cab_id):
     try:
-        # 1️⃣ Update cab status
+        # Update status to Available
         updated = db.update_cab_status(cab_id, 'Available')
         if not updated:
             return jsonify({'error': 'Cab update failed'}), 400
 
-        # 2️⃣ Fetch last ride
+        # Fetch last ride and set final position if available
         ride_details = db.get_ride_by_cab_id(cab_id)
-
-        destination_lat = None
-        destination_lng = None
-
         if ride_details:
             destination_lat = ride_details.get('end_latitude')
             destination_lng = ride_details.get('end_longitude')
-
-            # update cab location only if both are valid floats
             if destination_lat not in (None, "") and destination_lng not in (None, ""):
-                db.update_cab_location(cab_id, destination_lat, destination_lng)
+                try:
+                    db.update_cab_location(cab_id, float(destination_lat), float(destination_lng))
+                except Exception:
+                    try:
+                        db.update_cab_location(cab_id, destination_lat, destination_lng)
+                    except Exception:
+                        pass
 
-        # 3️⃣ Remove active route
+        # Remove active target (finalize)
         if cab_id in active_cab_targets:
             active_cab_targets.pop(cab_id, None)
 
-        # 4️⃣ SAFE BROADCAST
         broadcast_to_all({
             "cab_id": cab_id,
-            "latitude": destination_lat or 0.0,
-            "longitude": destination_lng or 0.0,
+            "latitude": float(ride_details.get('end_latitude')) if ride_details and ride_details.get('end_latitude') else 0.0,
+            "longitude": float(ride_details.get('end_longitude')) if ride_details and ride_details.get('end_longitude') else 0.0,
             "status": "Available"
         })
 
         return jsonify({'message': f'Cab {cab_id} set to Available'}), 200
-
     except Exception as e:
-        print("🔥 ERROR in complete_ride():", e)
         return jsonify({'error': str(e)}), 500
 
 
 # ---------------------------------------------
-# SIMULATION LOOP
+# SIMULATION: move cab -> pickup -> destination
 # ---------------------------------------------
 def simulate_cab_movements():
-    """Simulate live cab movement toward pickup points."""
-    print("🚗 Starting live cab movement simulation...")
-
+    """
+    Loop: read DB cabs -> move those in active_cab_targets toward their target.
+    When pickup reached -> switch to destination (if ride exists).
+    When destination reached -> mark Arrived (do not remove active target; await /complete_ride).
+    Broadcast updates to connected websocket clients.
+    """
+    print("🚗 Starting cab movement simulation (spawned in gunicorn worker)...")
     while True:
         try:
             cabs = db.get_all_cabs()
             updates = []
 
             for cab in cabs:
-                cab_id = cab['cab_id']
-                lat = float(cab['latitude'])
-                lon = float(cab['longitude'])
-                status = cab.get('status', 'Available')
+                try:
+                    cab_id = cab['cab_id']
+                    lat = float(cab.get('latitude', 0.0))
+                    lon = float(cab.get('longitude', 0.0))
+                    status = cab.get('status', 'Available')
+                except Exception as e:
+                    print("⚠️ Skipping malformed cab record:", e)
+                    continue
 
-                # 🚕 Move cab toward pickup if assigned
                 if cab_id in active_cab_targets:
                     target = active_cab_targets[cab_id]
-                    target_lat = float(target['target_lat'])
-                    target_lng = float(target['target_lng'])
+                    target_lat = float(target.get('target_lat', lat))
+                    target_lng = float(target.get('target_lng', lon))
+                    phase = target.get('phase', 'to_pickup')
 
                     dlat = target_lat - lat
                     dlon = target_lng - lon
                     dist = (dlat**2 + dlon**2) ** 0.5
 
-                    if dist < 0.00025:
-                        print(f"✅ Cab {cab_id} reached pickup!")
-                        db.update_cab_status(cab_id, "Arrived")
-                        target['status'] = 'arrived'
-                        # Optional: notify clients
-                        broadcast_to_all({
-                            "cab_id": cab_id,
-                            "status": "Arrived"
-                        })
-                        del active_cab_targets[cab_id]
+                    ARRIVE_THRESHOLD = 0.00025
+
+                    if dist < ARRIVE_THRESHOLD:
+                        # Arrived at target
+                        if phase == 'to_pickup':
+                            print(f"✅ Cab {cab_id} reached pickup.")
+                            db.update_cab_status(cab_id, "Arrived", latitude=target_lat, longitude=target_lng)
+                            broadcast_to_all({
+                                "cab_id": cab_id,
+                                "latitude": target_lat,
+                                "longitude": target_lng,
+                                "status": "Arrived"
+                            })
+
+                            # switch to destination (if ride exists)
+                            ride = db.get_ride_by_cab_id(cab_id)
+                            if ride and ride.get('end_latitude') and ride.get('end_longitude'):
+                                try:
+                                    end_lat = float(ride.get('end_latitude'))
+                                    end_lng = float(ride.get('end_longitude'))
+                                    active_cab_targets[cab_id] = {
+                                        "target_lat": end_lat,
+                                        "target_lng": end_lng,
+                                        "phase": "to_destination"
+                                    }
+                                    db.update_cab_status(cab_id, "OnTrip", latitude=target_lat, longitude=target_lng)
+                                    print(f"➡️ Cab {cab_id} now heading to destination {end_lat},{end_lng}")
+                                except Exception as e:
+                                    print("⚠️ invalid destination; freeing cab", e)
+                                    db.update_cab_status(cab_id, "Available")
+                                    active_cab_targets.pop(cab_id, None)
+                                    broadcast_to_all({
+                                        "cab_id": cab_id,
+                                        "latitude": lat,
+                                        "longitude": lon,
+                                        "status": "Available"
+                                    })
+                            else:
+                                # no ride, free cab
+                                db.update_cab_status(cab_id, "Available")
+                                active_cab_targets.pop(cab_id, None)
+                                broadcast_to_all({
+                                    "cab_id": cab_id,
+                                    "latitude": lat,
+                                    "longitude": lon,
+                                    "status": "Available"
+                                })
+
+                        elif phase == 'to_destination':
+                            print(f"🏁 Cab {cab_id} reached destination.")
+                            db.update_cab_status(cab_id, "Arrived", latitude=target_lat, longitude=target_lng)
+                            try:
+                                db.update_cab_location(cab_id, target_lat, target_lng)
+                            except Exception:
+                                pass
+                            broadcast_to_all({
+                                "cab_id": cab_id,
+                                "latitude": target_lat,
+                                "longitude": target_lng,
+                                "status": "ArrivedDestination"
+                            })
+                            # DO NOT remove active target; wait for /complete_ride
+
                     else:
-                        step = 0.0002
+                        # Move step toward target
+                        step = 0.00025
                         lat += step * (dlat / dist)
                         lon += step * (dlon / dist)
-                        db.update_cab_location(cab_id, lat, lon, status)
 
-                # 💤 Slight movement for idle cabs
-                elif status == "Available":
-                    lat += random.uniform(-0.0002, 0.0002)
-                    lon += random.uniform(-0.0002, 0.0002)
-                    db.update_cab_location(cab_id, lat, lon, status)
-
-                updates.append({
-                    "cab_id": cab_id,
-                    "latitude": lat,
-                    "longitude": lon,
-                    "status": status
-                })
-
-            # Broadcast to WebSocket clients
-            for client in clients[:]:
-                if not client.closed:
-                    for u in updates:
+                        # Update DB location
                         try:
-                            client.send(json.dumps(u))
+                            db.update_cab_location(cab_id, lat, lon, status=status if status else None)
                         except Exception:
+                            try:
+                                db.update_cab_location(cab_id, lat, lon)
+                            except Exception:
+                                pass
+
+                        # add to updates for broadcast
+                        broadcast_status = 'Enroute' if phase == 'to_pickup' else 'OnTrip'
+                        updates.append({
+                            "cab_id": cab_id,
+                            "latitude": lat,
+                            "longitude": lon,
+                            "status": broadcast_status
+                        })
+
+                else:
+                    # idle wandering for available cabs
+                    if status == "Available":
+                        lat += random.uniform(-0.00015, 0.00015)
+                        lon += random.uniform(-0.00015, 0.00015)
+                        try:
+                            db.update_cab_location(cab_id, lat, lon)
+                        except Exception:
+                            pass
+                    updates.append({
+                        "cab_id": cab_id,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "status": status
+                    })
+
+            # send updates to websocket clients
+            for client in clients[:]:
+                if client.closed:
+                    try:
+                        clients.remove(client)
+                    except Exception:
+                        pass
+                    continue
+                for u in updates:
+                    try:
+                        client.send(json.dumps(u))
+                    except Exception:
+                        try:
                             clients.remove(client)
+                        except Exception:
+                            pass
 
         except Exception as e:
-            print(f"💥 Simulation error: {e}")
+            print("💥 Simulation loop error:", e)
 
-        gevent.sleep(2)  # update frequency
+        gevent.sleep(2)
 
 
 def broadcast_to_all(message: dict):
-    """Helper to broadcast a single message to all clients."""
     for client in clients[:]:
-        if not client.closed:
+        if client.closed:
             try:
-                client.send(json.dumps(message))
-            except Exception:
                 clients.remove(client)
+            except Exception:
+                pass
+            continue
+        try:
+            client.send(json.dumps(message))
+        except Exception:
+            try:
+                clients.remove(client)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------
-# SERVER STARTUP
+# START SIMULATION (spawn under Gunicorn worker)
 # ---------------------------------------------
-if __name__ == '__main__':
-    from gevent.pywsgi import WSGIServer
-    from geventwebsocket.handler import WebSocketHandler
-
-    print('🚀 Smart Cab Backend Live at http://127.0.0.1:5001')
-    print('📡 WebSocket running at ws://127.0.0.1:5001/cab_location_updates')
-
-    # Start cab simulation in background
+# Important: spawn() runs the simulation in the worker process context.
+# This line ensures the simulation loop runs when Gunicorn imports app.py.
+try:
     spawn(simulate_cab_movements)
-
-    # Run server
-    http_server = WSGIServer(('', 5001), app, handler_class=WebSocketHandler)
-    http_server.serve_forever()
+    print("🟢 Cab simulation spawned.")
+except Exception as e:
+    print("⚠️ Failed to spawn simulation:", e)
