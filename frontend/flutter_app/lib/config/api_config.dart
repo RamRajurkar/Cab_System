@@ -1,37 +1,33 @@
 /// api_config.dart
-/// Configurable backend URLs for local and production environments.
-/// 
-/// Local = your laptop's IP (for USB or Wi-Fi testing)
-/// Production = your Render backend URL (for deployed backend)
+/// Backend API + WebSocket configuration
 
 import 'package:flutter/foundation.dart';
 
 class ApiConfig {
-
-  // static const baseUrl = 'https://cab-system-backend-31nf.onrender.com';
+  // WebSocket URL (Render supports WSS)
   static const wsUrl = 'wss://cab-system-backend-31nf.onrender.com/cab_location_updates';
-  // 🔹 Local Flask URL — replace with your computer’s IPv4
+
+  // Local backend during development
   static const String localUrl = "http://192.168.1.7:5001";
 
-  // 🔹 Render backend URL — your hosted Flask API
-  static const String prodUrl = "https://cab-system-backend-31nf.onrender.com/";
+  // Production backend (NO trailing slash)
+  static const String prodUrl = "https://cab-system-backend-31nf.onrender.com";
 
-  /// ✅ Force production mode (useful when debugging on phone via USB)
-  /// Set to `true` to always use hosted Render backend.
-  /// Set to `false` to auto-switch between local (debug) and hosted (release).
-  static const bool forceProd = true; // ⚠️ Change to false for local Flask testing
+  // Force production (useful when testing on real phone)
+  static const bool forceProd = true;
 
-  /// Automatically picks backend based on environment.
+  /// Auto-select URL based on environment or override
   static String get baseUrl {
-    final bool isProd = bool.fromEnvironment('dart.vm.product');
-    final String selectedUrl =
-        forceProd ? prodUrl : (isProd ? prodUrl : localUrl);
+    final bool isProdRuntime = bool.fromEnvironment('dart.vm.product');
 
-    // 🐞 Debugging logs
-    debugPrint("🔧 [ApiConfig] Running in ${isProd ? 'Release' : 'Debug'} mode");
-    debugPrint("🌐 [ApiConfig] ForceProd: $forceProd");
-    debugPrint("🚀 [ApiConfig] Using backend URL: $selectedUrl");
+    final selected = forceProd
+        ? prodUrl
+        : (isProdRuntime ? prodUrl : localUrl);
 
-    return selectedUrl;
+    debugPrint("🔧 [ApiConfig] Running in ${isProdRuntime ? 'Release' : 'Debug'}");
+    debugPrint("🌐 [ApiConfig] forceProd = $forceProd");
+    debugPrint("🚀 [ApiConfig] baseUrl = $selected");
+
+    return selected;
   }
 }
