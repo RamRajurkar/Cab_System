@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart' as flutter_map;
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
+import 'package:lottie/lottie.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
-import 'package:lottie/lottie.dart';
 
 import '../config/api_config.dart';
 
@@ -44,22 +44,30 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
   late WebSocketChannel _channel;
 
   LatLng? _cabPosition;
-  LatLng? _targetPosition;
   double _cabRotation = 0.0;
 
   Timer? _positionTimer;
-  String _rideStatus = "Driver is on the way 🚗";
-  bool _isRideCompleted = false;
-  bool _isArrived = false;
+
+  /// UI Stage Flow:
+  /// arrival_animation → show_start_button → ride_starting → show_complete_button → completed
+  String _uiStage = "arrival_animation"; 
+
   bool _isLoading = false;
+  bool _isRideCompleted = false;
 
   @override
   void initState() {
     super.initState();
+
     _mapController = flutter_map.MapController();
     _cabPosition = widget.cabInitialPosition;
 
     _connectWebSocket();
+
+    // Show arrival animation for 3 seconds
+    Future.delayed(const Duration(seconds: 3), () {
+      setState(() => _uiStage = "show_start_button");
+    });
   }
 
   @override
@@ -69,11 +77,12 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
     super.dispose();
   }
 
-  // ------------------------ WebSocket ------------------------
+  // ─────────────────────────────────────────────
+  // 🛰️ WebSocket live tracking
+  // ─────────────────────────────────────────────
 
   void _connectWebSocket() {
-    final wsUrl = ApiConfig.wsUrl;
-    _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+    _channel = WebSocketChannel.connect(Uri.parse(ApiConfig.wsUrl));
 
     _channel.stream.listen((event) {
       final data = jsonDecode(event);
@@ -83,224 +92,156 @@ class _BookingStatusScreenState extends State<BookingStatusScreen>
         final newLng = data["longitude"]?.toDouble();
 
         if (newLat != null && newLng != null) {
-          _startSmoothMovement(LatLng(newLat, newLng));
-        }
-
-        if (data["status"] == "Arrived" && !_isArrived) {
-          _isArrived = true;
-          _rideStatus = "Your driver has arrived 🚕";
-          _showArrivalDialog();
+          _updateCabMovement(LatLng(newLat, newLng));
         }
       }
-    }, onError: (e) {
-      debugPrint("⚠️ WebSocket error: $e");
     });
   }
 
-  // --------------------- Smooth Animation ---------------------
-
-  void _startSmoothMovement(LatLng newPos) {
+  void _updateCabMovement(LatLng newPos) {
     if (_cabPosition == null) {
-      _cabPosition = newPos;
+      setState(() => _cabPosition = newPos);
       return;
     }
 
-    _targetPosition = newPos;
-    final oldPos = _cabPosition!;
-    const int steps = 60;
-    int current = 0;
+    final old = _cabPosition!;
+    final dir = atan2(newPos.longitude - old.longitude,
+            newPos.latitude - old.latitude) *
+        (180 / pi);
 
-    _positionTimer?.cancel();
-    _positionTimer =
-        Timer.periodic(const Duration(milliseconds: 33), (timer) {
-      if (current >= steps) {
-        timer.cancel();
-        _cabPosition = newPos;
-        return;
-      }
-
-      current++;
-      final t = current / steps;
-      final lat = oldPos.latitude + (newPos.latitude - oldPos.latitude) * t;
-      final lng = oldPos.longitude + (newPos.longitude - oldPos.longitude) * t;
-
-      _cabRotation =
-          atan2(newPos.longitude - oldPos.longitude, newPos.latitude - oldPos.latitude) *
-              (180 / pi);
-
-      setState(() {
-        _cabPosition = LatLng(lat, lng);
-        _mapController.move(_cabPosition!, _mapController.camera.zoom);
-      });
+    setState(() {
+      _cabPosition = newPos;
+      _cabRotation = dir;
     });
   }
 
-  // ---------------------- Arrived Alert -----------------------
+  // ─────────────────────────────────────────────
+  // 🎉 Complete Ride
+  // ─────────────────────────────────────────────
 
-  void _showArrivalDialog() {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text("🚕 Driver Arrived"),
-        content: const Text("Your cab has reached the pickup point."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("OK"),
-          )
-        ],
-      ),
-    );
-  }
+  Future<void> _completeRide() async {
+    setState(() => _isLoading = true);
 
-  // ---------------------- Complete Ride -----------------------
+    final url =
+        Uri.parse("${ApiConfig.baseUrl}/api/complete_ride/${widget.cabId}");
 
- Future<void> _completeRide() async {
-  debugPrint("🚀 _completeRide() called");
-
-  setState(() => _isLoading = true);
-
-  final url = Uri.parse('${ApiConfig.baseUrl}/api/complete_ride/${widget.cabId}');
-  debugPrint("🌐 API CALL → $url");
-
-  try {
     final response = await http.get(url);
 
-    debugPrint("📩 API STATUS: ${response.statusCode}");
-    debugPrint("📩 API BODY: ${response.body}");
-
     if (response.statusCode == 200) {
-      debugPrint("🎉 API success → calling _showSuccessSheet()");
       setState(() => _isRideCompleted = true);
 
-      widget.onCabsRefresh();
-      widget.onRideCompleted();
-
-      _showSuccessSheet();
-    } else {
-      debugPrint("❌ API did NOT return 200");
+      Future.delayed(const Duration(seconds: 2), () {
+        _showSuccessSheet();
+      });
     }
-  } catch (e) {
-    debugPrint("💥 EXCEPTION: $e");
-  } finally {
+
     setState(() => _isLoading = false);
   }
-}
 
-  // --------------------- Success Bottom Sheet -----------------------
+  // ─────────────────────────────────────────────
+  // 🎉 Success Modal
+  // ─────────────────────────────────────────────
 
-void _showSuccessSheet() {
-  debugPrint("🔥 _showSuccessSheet() CALLED");
-
-  showModalBottomSheet(
-    context: context,
-    isDismissible: true,
-    enableDrag: true,
-    builder: (_) {
-      return Container(
-        padding: const EdgeInsets.all(24),
-        height: 200,
-        child: const Center(
-          child: Text(
-            "🎉 Ride Completed Successfully!",
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-        ),
-      );
-    },
-  );
-}
-
-  // ---------------------- UI Bottom Card ----------------------
-
-  Widget _buildBottomCard() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeInOut,
-      padding: const EdgeInsets.all(16),
-      height: 260,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 12,
-            offset: const Offset(0, -3),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 50,
-              height: 5,
-              margin: const EdgeInsets.only(bottom: 10),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  void _showSuccessSheet() {
+    showModalBottomSheet(
+      context: context,
+      isDismissible: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (_) {
+        return SizedBox(
+          height: 330,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                _rideStatus,
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              Lottie.asset("assets/animations/success.json",
+                  height: 160, repeat: false),
+              const SizedBox(height: 8),
+              const Text("Ride Completed!",
+                  style: TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 5),
+              const Text("Thank you for riding with us.",
+                  style: TextStyle(color: Colors.grey)),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.pop(context);
+                  widget.onRideCompleted();
+                },
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(200, 45),
+                  backgroundColor: Colors.green,
+                ),
+                child: const Text("Done"),
               ),
-              if (_isLoading)
-                const CircularProgressIndicator(strokeWidth: 3),
             ],
           ),
-          const SizedBox(height: 10),
-          Text("Fare: ₹${widget.fare.toStringAsFixed(2)}",
-              style: const TextStyle(fontSize: 16)),
-          const SizedBox(height: 4),
-          Text(
-            "Pickup: (${widget.userSource.latitude.toStringAsFixed(4)}, ${widget.userSource.longitude.toStringAsFixed(4)})",
-            style: const TextStyle(color: Colors.grey),
-          ),
-          Text(
-            "Destination: (${widget.userDestination.latitude.toStringAsFixed(4)}, ${widget.userDestination.longitude.toStringAsFixed(4)})",
-            style: const TextStyle(color: Colors.grey),
-          ),
-          const Spacer(),
-          if (!_isRideCompleted)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.flag_circle_outlined),
-                label: const Text("Ride Completed"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  minimumSize: const Size.fromHeight(48),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                onPressed: _completeRide,
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  // ----------------------- Build UI -----------------------
+  // ─────────────────────────────────────────────
+  // 🧭 Bottom UI based on stage
+  // ─────────────────────────────────────────────
+
+  Widget _buildBottomUI() {
+    switch (_uiStage) {
+      case "arrival_animation":
+        return Lottie.asset("assets/animations/driver_arriving.json", height: 180);
+
+      case "show_start_button":
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Driver is arriving...",
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: () {
+                setState(() => _uiStage = "ride_starting");
+
+                Future.delayed(const Duration(seconds: 2), () {
+                  setState(() => _uiStage = "show_complete_button");
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(200, 45)),
+              child: const Text("Start Ride"),
+            ),
+          ],
+        );
+
+      case "ride_starting":
+        return Lottie.asset("assets/animations/ride_starting.json", height: 180);
+
+      case "show_complete_button":
+        return ElevatedButton(
+          onPressed: _completeRide,
+          style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              minimumSize: const Size(230, 48)),
+          child: _isLoading
+              ? const CircularProgressIndicator(color: Colors.white)
+              : const Text("Ride Completed"),
+        );
+    }
+    return const SizedBox();
+  }
+
+  // ─────────────────────────────────────────────
+  // 🗺 Main UI
+  // ─────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Live Ride Tracking"),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text("Live Ride Tracking")),
       body: Stack(
         children: [
+          // MAP
           flutter_map.FlutterMap(
             mapController: _mapController,
             options: flutter_map.MapOptions(
@@ -311,8 +252,10 @@ void _showSuccessSheet() {
               flutter_map.TileLayer(
                 urlTemplate:
                     "https://api.maptiler.com/maps/streets/{z}/{x}/{y}.png?key=NF4AhANXs6D1lsaZ3uik",
-                userAgentPackageName: 'com.example.smart_cab_allocation',
+                userAgentPackageName: 'smart_cab_allocation',
               ),
+
+              // CAB Marker
               if (_cabPosition != null)
                 flutter_map.MarkerLayer(
                   markers: [
@@ -323,34 +266,40 @@ void _showSuccessSheet() {
                       child: Transform.rotate(
                         angle: _cabRotation * pi / 180,
                         child: const Icon(Icons.local_taxi,
-                            color: Colors.orangeAccent, size: 40),
+                            size: 40, color: Colors.orange),
                       ),
-                    ),
-                    flutter_map.Marker(
-                      point: widget.userSource,
-                      width: 60,
-                      height: 60,
-                      child: const Icon(Icons.location_pin,
-                          color: Colors.blueAccent, size: 35),
-                    ),
-                    flutter_map.Marker(
-                      point: widget.userDestination,
-                      width: 60,
-                      height: 60,
-                      child: const Icon(Icons.flag,
-                          color: Colors.green, size: 35),
                     ),
                   ],
                 ),
+
+              // User markers
+              flutter_map.MarkerLayer(
+                markers: [
+                  flutter_map.Marker(
+                    point: widget.userSource,
+                    width: 60,
+                    height: 60,
+                    child: const Icon(Icons.location_pin,
+                        color: Colors.blueAccent, size: 38),
+                  ),
+                  flutter_map.Marker(
+                    point: widget.userDestination,
+                    width: 60,
+                    height: 60,
+                    child: const Icon(Icons.flag,
+                        color: Colors.green, size: 38),
+                  ),
+                ],
+              ),
             ],
           ),
 
-          // Bottom Panel
+          // BOTTOM UI
           Positioned(
+            bottom: 25,
             left: 0,
             right: 0,
-            bottom: 0,
-            child: _buildBottomCard(),
+            child: Center(child: _buildBottomUI()),
           ),
         ],
       ),
