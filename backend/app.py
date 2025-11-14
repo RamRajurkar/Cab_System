@@ -164,27 +164,70 @@ def book_cab():
 # ---------------------------------------------
 # COMPLETE RIDE
 # ---------------------------------------------
+@app.route('/api/reset_cab_status', methods=['POST'])
+def reset_cab_status():
+    data = request.get_json()
+    cab_id = data.get('cab_id')
+
+    try:
+        if cab_id:
+            # Reset status for a specific cab
+            updated = db.update_cab_status(cab_id, 'Available')
+            if not updated:
+                return jsonify({'error': f'Cab {cab_id} not found or update failed'}), 404
+            message = f'Cab {cab_id} status reset to Available'
+        else:
+            # Reset status for all cabs
+            db.reset_all_cab_statuses()
+            message = 'All cab statuses reset to Available'
+
+        return jsonify({'message': message}), 200
+
+    except Exception as e:
+        print(f"🔥 ERROR in /api/reset_cab_status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+
 @app.route('/api/complete_ride/<int:cab_id>', methods=['GET'])
 def complete_ride(cab_id):
-    if db.update_cab_status(cab_id, 'Available'):
+    try:
+        # 1️⃣ Update cab status safely
+        updated = db.update_cab_status(cab_id, 'Available')
+        if not updated:
+            return jsonify({'error': 'Cab not found or update failed'}), 400
+
+        # 2️⃣ Try fetching ride details (may not exist)
+        ride_details = db.get_ride_by_cab_id(cab_id)
+
         destination_lat = None
         destination_lng = None
-        ride_details = db.get_ride_by_cab_id(cab_id)
-        if ride_details:
-            destination_lat = ride_details['end_latitude']
-            destination_lng = ride_details['end_longitude']
-            db.update_cab_location(cab_id, destination_lat, destination_lng)
 
+        if ride_details:
+            destination_lat = ride_details.get('end_latitude')
+            destination_lng = ride_details.get('end_longitude')
+
+            # Update cab location ONLY if valid
+            if destination_lat is not None and destination_lng is not None:
+                db.update_cab_location(cab_id, destination_lat, destination_lng)
+
+        # 3️⃣ Safely remove active target
         if cab_id in active_cab_targets:
-            del active_cab_targets[cab_id]
+            active_cab_targets.pop(cab_id, None)
+
+        # 4️⃣ SAFE broadcast
         broadcast_to_all({
             "cab_id": cab_id,
-            "latitude": destination_lat,
-            "longitude": destination_lng,
+            "latitude": destination_lat or 0.0,     # default fallback
+            "longitude": destination_lng or 0.0,
             "status": "Available"
         })
+
         return jsonify({'message': f'Cab {cab_id} set to Available'}), 200
-    return jsonify({'message': 'Failed to complete ride'}), 500
+
+    except Exception as e:
+        print("🔥 ERROR in /complete_ride:", e)
+        return jsonify({'error': str(e)}), 500
 
 
 # ---------------------------------------------

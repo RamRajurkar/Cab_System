@@ -1,3 +1,5 @@
+// -------------------- FIXED & CLEANED MAP_SCREEN.DART -----------------------
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
@@ -28,7 +30,8 @@ class MapScreen extends StatefulWidget {
 
 class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   late final AnimatedMapController _animatedMapController;
-  flutter_map.MapController get _mapController => _animatedMapController.mapController;
+  flutter_map.MapController get _mapController =>
+      _animatedMapController.mapController;
 
   LatLng? _currentLocation;
   LatLng? _sourceLocation;
@@ -53,11 +56,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
 
-    // DB setup only for desktop/web
     if (kIsWeb) {
       databaseFactory = databaseFactoryFfiWeb;
     } else {
-      final isDesktop = Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+      final isDesktop =
+          Platform.isWindows || Platform.isLinux || Platform.isMacOS;
       if (isDesktop) {
         sqfliteFfiInit();
         databaseFactory = databaseFactoryFfi;
@@ -70,7 +73,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _initDatabase();
     _getCurrentLocation();
     _fetchCabLocations();
-    _cabTimer = Timer.periodic(const Duration(seconds: 5), (t) => _fetchCabLocations());
+    _cabTimer =
+        Timer.periodic(const Duration(seconds: 5), (t) => _fetchCabLocations());
   }
 
   @override
@@ -85,6 +89,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   // ---------------------- DATABASE ----------------------
+
   Future<void> _initDatabase() async {
     try {
       final dbPath = await getDatabasesPath();
@@ -109,12 +114,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   // ---------------------- LOCATION ----------------------
+
   void _getCurrentLocation() async {
     bool service = await Geolocator.isLocationServiceEnabled();
     if (!service) return;
 
     LocationPermission perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
+    if (perm == LocationPermission.denied)
+      perm = await Geolocator.requestPermission();
     if (perm == LocationPermission.deniedForever) return;
 
     final pos = await Geolocator.getCurrentPosition();
@@ -128,14 +135,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
   }
 
-  // ---------------------- FETCH CABS ----------------------
+  // ---------------------- FETCH CAB LOCATIONS ----------------------
+
   Future<void> _fetchCabLocations() async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/cabs');
+
     try {
       final resp = await http.get(url);
+
       if (resp.statusCode == 200) {
         final List<dynamic> data = json.decode(resp.body);
-        debugPrint("Cab locations API response: ${resp.body}");
+
         final List<Map<String, dynamic>> cabs = [];
         for (var c in data) {
           if (c['latitude'] != null && c['longitude'] != null) {
@@ -147,6 +157,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             });
           }
         }
+
         setState(() => _cabLocations = cabs);
       }
     } catch (e) {
@@ -155,16 +166,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   // ---------------------- ROUTE ----------------------
+
   Future<void> _calculateRoute() async {
     if (_sourceLocation == null || _destinationLocation == null) return;
+
     try {
       final url = Uri.parse(
           'https://router.project-osrm.org/route/v1/driving/${_sourceLocation!.longitude},${_sourceLocation!.latitude};${_destinationLocation!.longitude},${_destinationLocation!.latitude}?overview=full&geometries=geojson');
+
       final resp = await http.get(url);
+
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
         if (data['routes'] != null && data['routes'].isNotEmpty) {
           final route = data['routes'][0]['geometry']['coordinates'] as List;
+
           setState(() {
             _routePoints = route.map((e) => LatLng(e[1], e[0])).toList();
           });
@@ -176,14 +192,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   // ---------------------- FIND CAB ----------------------
+
   Future<void> _findCab() async {
     if (_sourceLocation == null || _destinationLocation == null) {
       setState(() => _errorMessage = 'Select both pickup & drop.');
       return;
     }
+
     setState(() => _isLoading = true);
 
     final url = Uri.parse('${ApiConfig.baseUrl}/api/find_cab');
+
     final body = json.encode({
       'start_latitude': _sourceLocation!.latitude,
       'start_longitude': _sourceLocation!.longitude,
@@ -192,7 +211,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
 
     try {
-      final resp = await http.post(url, headers: {'Content-Type': 'application/json'}, body: body);
+      final resp = await http.post(url,
+          headers: {'Content-Type': 'application/json'}, body: body);
+
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
         setState(() => _foundCabDetails = data);
@@ -207,14 +228,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   // ---------------------- BOOK CAB ----------------------
+
   Future<void> _bookRide(Map<String, dynamic> option) async {
     final cab = option['cab'];
     final cabId = cab['cab_id'];
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/book_cab');
 
-    debugPrint('Attempting to book ride for cab ID: $cabId');
-    debugPrint('Source Location: $_sourceLocation');
-    debugPrint('Destination Location: $_destinationLocation');
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/book_cab');
 
     final body = json.encode({
       'cab_id': cabId,
@@ -227,11 +246,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     try {
       setState(() => _isLoading = true);
-      final resp = await http.post(url, headers: {'Content-Type': 'application/json'}, body: body);
+
+      final resp = await http.post(url,
+          headers: {'Content-Type': 'application/json'}, body: body);
+
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
         setState(() => _assignedCab = data);
-        debugPrint('Ride booked successfully. Assigned Cab: $_assignedCab');
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Ride booked successfully!')),
         );
@@ -243,19 +265,51 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
-  // ---------------------- BUILD ----------------------
+  Future<void> _onBookNow(int cabId, Map<String, dynamic> option) async {
+    await _bookRide(option);
+
+    if (_assignedCab != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BookingStatusScreen(
+            cabId: cabId,
+            cabInitialPosition:
+                LatLng(option['cab']['latitude'], option['cab']['longitude']),
+            userSource: _sourceLocation!,
+            userDestination: _destinationLocation!,
+            fare: double.parse(option['fare'].toString()),
+            cabName: option['cab']['name'] ?? 'Cab',
+            onCabsRefresh: _fetchCabLocations,
+            onRideCompleted: () {
+              setState(() {
+                _foundCabDetails = null;
+                _assignedCab = null;
+              });
+              _fetchCabLocations();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  // ---------------------- UI BUILD ----------------------
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Smart Cab Booking'),
         actions: [
-          IconButton(onPressed: _fetchCabLocations, icon: const Icon(Icons.refresh)),
+          IconButton(
+              onPressed: _fetchCabLocations, icon: const Icon(Icons.refresh)),
         ],
       ),
       body: Stack(
         children: [
-          // 🗺️ Map
+          // ---------------- MAP ----------------
+
           flutter_map.FlutterMap(
             mapController: _mapController,
             options: flutter_map.MapOptions(
@@ -265,14 +319,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 setState(() {
                   if (_sourceLocation == null) {
                     _sourceLocation = latlng;
-                    _sourceController.text = '${latlng.latitude}, ${latlng.longitude}';
+                    _sourceController.text =
+                        '${latlng.latitude}, ${latlng.longitude}';
                   } else if (_destinationLocation == null) {
                     _destinationLocation = latlng;
-                    _destinationController.text = '${latlng.latitude}, ${latlng.longitude}';
+                    _destinationController.text =
+                        '${latlng.latitude}, ${latlng.longitude}';
                     _calculateRoute();
                   } else {
                     _sourceLocation = latlng;
-                    _sourceController.text = '${latlng.latitude}, ${latlng.longitude}';
+                    _sourceController.text =
+                        '${latlng.latitude}, ${latlng.longitude}';
                     _destinationLocation = null;
                     _destinationController.clear();
                     _routePoints.clear();
@@ -286,14 +343,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     "https://api.maptiler.com/maps/streets/{z}/{x}/{y}.png?key=NF4AhANXs6D1lsaZ3uik",
                 userAgentPackageName: 'com.example.smart_cab_allocation',
               ),
+
               if (_routePoints.isNotEmpty)
                 flutter_map.PolylineLayer(polylines: [
-                  flutter_map.Polyline(points: _routePoints, color: Colors.blue, strokeWidth: 4)
+                  flutter_map.Polyline(
+                      points: _routePoints,
+                      color: Colors.blue,
+                      strokeWidth: 4),
                 ]),
+
               const CurrentLocationLayer(
                 alignPositionOnUpdate: AlignOnUpdate.always,
                 alignDirectionOnUpdate: AlignOnUpdate.never,
               ),
+
               flutter_map.MarkerLayer(
                 markers: _cabLocations.map<flutter_map.Marker>((cab) {
                   final LatLng p = cab['position'];
@@ -303,7 +366,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     height: 60,
                     child: Icon(
                       Icons.local_taxi,
-                      color: cab['status'] == 'Available' ? Colors.green : Colors.red,
+                      color: cab['status'] == 'Available'
+                          ? Colors.green
+                          : Colors.red,
                       size: 32,
                     ),
                   );
@@ -312,8 +377,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ],
           ),
 
+          // ---------------- LOADING ----------------
+
           if (_isLoading)
-            const Center(child: SpinKitChasingDots(color: Colors.blue, size: 40)),
+            const Center(
+              child: SpinKitChasingDots(color: Colors.blue, size: 40),
+            ),
+
+          // ---------------- ERROR MESSAGE ----------------
 
           if (_errorMessage != null)
             Positioned(
@@ -323,25 +394,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               child: Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                    color: Colors.redAccent, borderRadius: BorderRadius.circular(10)),
-                child: Text(_errorMessage!,
-                    style: const TextStyle(color: Colors.white),
-                    textAlign: TextAlign.center),
+                    color: Colors.redAccent,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
 
-          // 🧭 Draggable bottom sheet
+          // ---------------- BOTTOM SHEET ----------------
+
           DraggableScrollableSheet(
             controller: _sheetController,
             initialChildSize: 0.25,
             minChildSize: 0.18,
-            maxChildSize: 0.6,
+            maxChildSize: 0.65,
             builder: (context, scrollController) {
               return Container(
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-                  boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                  boxShadow: [
+                    BoxShadow(color: Colors.black26, blurRadius: 8)
+                  ],
                 ),
                 padding: const EdgeInsets.all(16),
                 child: SingleChildScrollView(
@@ -352,14 +429,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         width: 50,
                         height: 5,
                         decoration: BoxDecoration(
-                            color: Colors.grey[300],
-                            borderRadius: BorderRadius.circular(5)),
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(5),
+                        ),
                       ),
+
                       const SizedBox(height: 12),
 
-                      _buildTextField(_sourceController, 'Pickup Location', Icons.location_on),
+                      _buildTextField(
+                          _sourceController, 'Pickup Location', Icons.location_on),
+
                       const SizedBox(height: 10),
-                      _buildTextField(_destinationController, 'Drop Location', Icons.flag),
+
+                      _buildTextField(_destinationController,
+                          'Drop Location', Icons.flag),
+
                       const SizedBox(height: 14),
 
                       ElevatedButton.icon(
@@ -367,63 +451,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         icon: const Icon(Icons.search),
                         label: const Text('Find Cab'),
                         style: ElevatedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(45),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10))),
+                          minimumSize: const Size.fromHeight(45),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
+                        ),
                       ),
 
+                      const SizedBox(height: 12),
+
+                      // -------- SHOW AVAILABLE CABS --------
+
                       if (_foundCabDetails != null &&
-                          _foundCabDetails!['available_cabs'] != null)
-                        ...List.generate(
-                          (_foundCabDetails!['available_cabs'] as List).length,
-                          (i) {
-                            final option =
-                                (_foundCabDetails!['available_cabs'] as List)[i];
-                            final cab = option['cab'];
-                            final fare = option['fare'];
-                            final dist = option['total_distance'];
-                            return RideCard(
-                              cabName: cab['name'] ?? 'Cab',
-                              cabStatus: option['status'] ?? 'Available',
-                              distanceToCab:
-                                  "${(option['pickup_distance'] ?? 0).toStringAsFixed(0)} m",
-                              distanceToDestination:
-                                  "${(dist ?? 0).toStringAsFixed(0)} m",
-                              startCoords:
-                                  '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
-                              endCoords:
-                                  '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
-                              isShared: option['is_shared'] ?? false,
-                              fare: fare.toStringAsFixed(2),
-                              onBookNow: (cabId) async {
-                                await _bookRide(option);
-                                if (_assignedCab != null) {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => BookingStatusScreen(
-                                        cabId: cabId,
-                                        cabInitialPosition: LatLng(cab['latitude'], cab['longitude']),
-                                        userSource: _sourceLocation!,
-                                        userDestination: _destinationLocation!,
-                                        fare: fare.toStringAsFixed(2),
-                                        cabName: cab['name'] ?? 'Cab',
-                                        onCabsRefresh: _fetchCabLocations,
-                                        onRideCompleted: () {
-                                          setState(() {
-                                            _foundCabDetails = null;
-                                            _assignedCab = null;
-                                          });
-                                          _fetchCabLocations();
-                                        },
-                                      ),
-                                    ),
-                                  );
-                                }
-                              },
-                            );
-                          },
-                        ),
+                          _foundCabDetails!['available_cabs'] != null) ...[
+                        ..._buildAvailableCabs(),
+                      ],
                     ],
                   ),
                 ),
@@ -435,6 +476,58 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
+  // ---------------------- CAB LIST BUILDER ----------------------
+
+  List<Widget> _buildAvailableCabs() {
+    final List options = _foundCabDetails!['available_cabs'];
+
+    return List.generate(options.length, (i) {
+      final option = options[i];
+      final cab = option['cab'];
+
+      // Safe extraction
+      final rawFare = option['fare'];
+      final rawDist = option['total_distance'];
+      final rawPickup = option['pickup_distance'];
+
+      // Safe conversion
+      final fareValue = (rawFare is num)
+          ? rawFare.toDouble()
+          : double.tryParse(rawFare.toString()) ?? 0.0;
+
+      final distValue = (rawDist is num)
+          ? rawDist.toDouble()
+          : double.tryParse(rawDist.toString()) ?? 0.0;
+
+      final pickupValue = (rawPickup is num)
+          ? rawPickup.toDouble()
+          : double.tryParse(rawPickup.toString()) ?? 0.0;
+
+      return RideCard(
+        cabName: cab['name'] ?? 'Cab',
+        cabStatus: option['status'] ?? 'Available',
+
+        distanceToCab: "${pickupValue.toStringAsFixed(0)} m",
+        distanceToDestination: "${distValue.toStringAsFixed(0)} m",
+
+        startCoords:
+            '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
+
+        endCoords:
+            '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
+
+        isShared: option['is_shared'] ?? false,
+
+        fare: fareValue.toStringAsFixed(2),
+
+        cabId: cab['cab_id'],
+        onBookNow: (cabId) => _onBookNow(cabId, option),
+      );
+    });
+  }
+
+  // ---------------------- TEXT FIELD ----------------------
+
   Widget _buildTextField(TextEditingController c, String hint, IconData icon) {
     return TextField(
       controller: c,
@@ -444,8 +537,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         filled: true,
         fillColor: Colors.grey[100],
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide.none),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide.none,
+        ),
       ),
     );
   }
