@@ -2,34 +2,24 @@ import 'package:flutter/material.dart';
 
 class RideCard extends StatelessWidget {
   final String cabName;
-  final String cabStatus;
-  final String distanceToCab;
-  final String distanceToDestination;
-  final String startCoords;
-  final String endCoords;
+  final double? fare;
   final bool isShared;
-  final String fare;
+  final String? primaryRequestId;
   final String? timestamp;
   final int? cabId;
   final ValueChanged<int>? onCompleteRide;
   final VoidCallback? onTap;
-  final ValueChanged<int>? onBookNow;
 
   const RideCard({
     Key? key,
     required this.cabName,
-    required this.cabStatus,
-    required this.distanceToCab,
-    required this.distanceToDestination,
-    required this.startCoords,
-    required this.endCoords,
-    required this.isShared,
-    required this.fare,
+    this.fare,
+    this.isShared = false,
+    this.primaryRequestId,
     this.timestamp,
     this.cabId,
     this.onCompleteRide,
     this.onTap,
-    this.onBookNow,
   }) : super(key: key);
 
   @override
@@ -61,36 +51,13 @@ class RideCard extends StatelessWidget {
               const SizedBox(height: 12),
               Divider(height: 1, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1)), // Add a divider for visual separation
               const SizedBox(height: 12),
-              _buildInfoRow(context, Icons.location_on, 'From:', startCoords),
-              const SizedBox(height: 8),
-              _buildInfoRow(context, Icons.location_searching, 'To:', endCoords),
-              const SizedBox(height: 8),
-              _buildInfoRow(context, Icons.straighten, 'Distance to Cab:', distanceToCab),
-              const SizedBox(height: 8),
-              _buildInfoRow(context, Icons.alt_route, 'Distance to Destination:', distanceToDestination),
+              if (fare != null) ...[
+                const SizedBox(height: 8),
+                _buildInfoRow(context, Icons.money, 'Fare:', '₹${fare!.toStringAsFixed(2)}'),
+              ],
               if (timestamp != null) ...[
                 const SizedBox(height: 8),
-                _buildInfoRow(context, Icons.access_time, 'Time:', timestamp!),
-              ],
-              if (onBookNow != null && cabId != null) ...[
-
-                const SizedBox(height: 16),
-                Center(
-                  child: ElevatedButton.icon(
-                    onPressed: () => onBookNow!(cabId!),
-                    icon: const Icon(Icons.book_online, color: Colors.white),
-                    label: Text(
-                      'Book Now',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.primary, // Use theme color
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      elevation: 4,
-                    ),
-                  ),
-                ),
+                _buildInfoRow(context, Icons.access_time, 'Time:', timestamp!), 
               ],
               if (onCompleteRide != null && cabId != null) ...[
                 const SizedBox(height: 16),
@@ -124,57 +91,51 @@ class RideCard extends StatelessWidget {
     String statusText;
 
     if (isShared) {
-      chipColor = Theme.of(context).colorScheme.tertiary;
+      chipColor = Colors.blueAccent;
       chipIcon = Icons.people;
-      statusText = 'Shared - $cabStatus';
-    } else if (cabStatus == 'Busy') {
-      chipColor = Theme.of(context).colorScheme.error;
-      chipIcon = Icons.directions_car;
-      statusText = 'Busy';
-    } else if (cabStatus == 'Available') {
-      chipColor = Theme.of(context).colorScheme.secondary;
+      statusText = 'Shared Ride';
+    } else {
+      chipColor = Colors.green;
       chipIcon = Icons.check_circle;
       statusText = 'Available';
-    } else {
-      chipColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.6); // Default color for unknown status
-      chipIcon = Icons.info_outline;
-      statusText = cabStatus; // Display original status if unknown
     }
 
     return Chip(
-      avatar: Icon(chipIcon, color: Theme.of(context).colorScheme.onPrimary, size: 16),
+      avatar: Icon(chipIcon, color: Colors.white, size: 18),
       label: Text(
         statusText,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
       ),
       backgroundColor: chipColor,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Slightly more vertical padding
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)), // More rounded corners
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     );
   }
 
-  Widget _buildInfoRow(BuildContext context, IconData icon, String title, String value) {
+  Widget _buildInfoRow(
+      BuildContext context, IconData icon, String label, String value) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
-        const SizedBox(width: 12),
+        Icon(icon, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7), size: 20),
+        const SizedBox(width: 10),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurface),
-                overflow: TextOverflow.ellipsis, // Handle long text
-              ),
-            ],
+          child: Text(
+            '$label ',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
+                ),
           ),
+        ),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
         ),
       ],
     );

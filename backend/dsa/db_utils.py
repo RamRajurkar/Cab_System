@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import sqlite3
 
 class DatabaseUtils:
     def __init__(self, db_path='../database.db'):
@@ -53,20 +54,61 @@ class DatabaseUtils:
             )
             ''')
 
-            # Create rides table
+            # Create ride_requests table for individual ride requests
             self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rides (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cab_id INTEGER NOT NULL,
-                user_start_x REAL NOT NULL,
-                user_start_y REAL NOT NULL,
-                user_end_x REAL NOT NULL,
-                user_end_y REAL NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                shared BOOLEAN DEFAULT 0,
+            CREATE TABLE IF NOT EXISTS ride_requests (
+                request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                start_latitude REAL NOT NULL,
+                start_longitude REAL NOT NULL,
+                end_latitude REAL NOT NULL,
+                end_longitude REAL NOT NULL,
+                request_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'pending', -- pending, accepted, rejected, completed, cancelled
+                is_shared BOOLEAN DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+            ''')
+
+            # Create shared_rides table to manage shared rides
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS shared_rides (
+                shared_ride_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cab_id INTEGER,
+                driver_id INTEGER,
+                status TEXT DEFAULT 'pending', -- pending, active, completed, cancelled
+                start_time DATETIME,
+                end_time DATETIME,
+                total_fare REAL,
                 FOREIGN KEY (cab_id) REFERENCES cabs (cab_id)
             )
             ''')
+
+            # Create ride_participants table to link ride requests to shared rides
+            self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ride_participants (
+                participant_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shared_ride_id INTEGER NOT NULL,
+                request_id INTEGER NOT NULL,
+                fare_contribution REAL,
+                FOREIGN KEY (shared_ride_id) REFERENCES shared_rides (shared_ride_id),
+                FOREIGN KEY (request_id) REFERENCES ride_requests (request_id)
+            )
+            ''')
+
+            CREATE TABLE IF NOT EXISTS rides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cab_id INTEGER NOT NULL,
+                start_latitude REAL NOT NULL,
+                start_longitude REAL NOT NULL,
+                end_latitude REAL NOT NULL,
+                end_longitude REAL NOT NULL,
+                is_shared BOOLEAN DEFAULT FALSE,
+                shared_ride_id INTEGER,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cab_id) REFERENCES cabs (cab_id),
+                FOREIGN KEY (shared_ride_id) REFERENCES shared_rides(shared_ride_id)
+            )
 
             # Create users table
             self.cursor.execute('''
@@ -101,6 +143,26 @@ class DatabaseUtils:
         except sqlite3.Error as e:
             print(f"Database initialization error: {e}")
             return False
+        finally:
+            self.disconnect()
+
+    def add_ride_request(self, user_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared=False):
+        """
+        Add a new ride request to the database.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute(
+                "INSERT INTO ride_requests (user_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared)
+            )
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"Error adding ride request: {e}")
+            return None
         finally:
             self.disconnect()
 
@@ -217,6 +279,26 @@ class DatabaseUtils:
         finally:
             self.disconnect()
 
+    def add_ride_participant(self, shared_ride_id, user_id):
+        """
+        Add a user as a participant to a shared ride.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute(
+                "INSERT INTO ride_participants (shared_ride_id, user_id) VALUES (?, ?)",
+                (shared_ride_id, user_id)
+            )
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"Error adding ride participant: {e}")
+            return None
+        finally:
+            self.disconnect()
+
     def add_cab(self, cab_id, name, rto_number, driver_name, latitude, longitude, status):
         """
         Add a new cab to the database or update an existing one.
@@ -234,7 +316,7 @@ class DatabaseUtils:
             print(f"Error adding/updating cab: {e}")
             return False
 
-    def add_ride(self, cab_id, user_start_latitude, user_start_longitude, user_end_latitude, user_end_longitude, shared):
+    def add_ride(self, cab_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared=False, shared_ride_id=None):
         """
         Add a new ride to the database.
         """
@@ -243,13 +325,137 @@ class DatabaseUtils:
 
         try:
             self.cursor.execute(
-                "INSERT INTO rides (cab_id, user_start_x, user_start_y, user_end_x, user_end_y, shared) VALUES (?, ?, ?, ?, ?, ?)",
-                (cab_id, user_start_latitude, user_start_longitude, user_end_latitude, user_end_longitude, shared)
+                "INSERT INTO rides (cab_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared, shared_ride_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (cab_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared, shared_ride_id)
             )
             self.conn.commit()
             return True
         except sqlite3.Error as e:
             print(f"Error adding ride: {e}")
+            return False
+        finally:
+            self.disconnect()
+
+    def add_ride_request(self, user_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared=False):
+        """
+        Add a new ride request to the database.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute(
+                "INSERT INTO ride_requests (user_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, start_latitude, start_longitude, end_latitude, end_longitude, is_shared)
+            )
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"Error adding ride request: {e}")
+            return None
+        finally:
+            self.disconnect()
+
+    def add_shared_ride(self, primary_ride_id, secondary_ride_id, fare_division):
+        """
+        Add a new shared ride entry to the database.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute(
+                "INSERT INTO shared_rides (primary_ride_id, secondary_ride_id, fare_division) VALUES (?, ?, ?)",
+                (primary_ride_id, secondary_ride_id, fare_division)
+            )
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"Error adding shared ride: {e}")
+            return None
+        finally:
+            self.disconnect()
+
+    def get_ride_request_by_id(self, request_id):
+        """
+        Retrieve a ride request by its ID.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute("SELECT * FROM ride_requests WHERE id = ?", (request_id,))
+            return self.cursor.fetchone()
+        except sqlite3.Error as e:
+            print(f"Error retrieving ride request: {e}")
+            return None
+        finally:
+            self.disconnect()
+
+    def get_shared_ride_by_id(self, shared_ride_id):
+        """
+        Retrieve a shared ride by its ID.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute("SELECT * FROM shared_rides WHERE id = ?", (shared_ride_id,))
+            return self.cursor.fetchone()
+        except sqlite3.Error as e:
+            print(f"Error retrieving shared ride: {e}")
+            return None
+        finally:
+            self.disconnect()
+
+    def get_ride_participants(self, shared_ride_id):
+        """
+        Retrieve all participants for a given shared ride ID.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute("SELECT user_id FROM ride_participants WHERE shared_ride_id = ?", (shared_ride_id,))
+            return [row[0] for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            print(f"Error retrieving ride participants: {e}")
+            return None
+        finally:
+            self.disconnect()
+
+    def get_all_ride_requests(self):
+        """
+        Retrieve all ride requests from the database.
+        """
+        if not self.connect():
+            return None
+
+        try:
+            self.cursor.execute("SELECT * FROM ride_requests")
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Error retrieving all ride requests: {e}")
+            return None
+        finally:
+            self.disconnect()
+
+    def update_ride_request_shared_status(self, request_id, is_shared):
+        """
+        Update the is_shared status of a ride request.
+        """
+        if not self.connect():
+            return False
+
+        try:
+            self.cursor.execute(
+                "UPDATE ride_requests SET is_shared = ? WHERE id = ?",
+                (is_shared, request_id)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Error updating ride request shared status: {e}")
             return False
         finally:
             self.disconnect()

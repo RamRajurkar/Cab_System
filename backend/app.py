@@ -10,6 +10,7 @@ from gevent import spawn
 from dsa.db_utils import DatabaseUtils
 from dsa.heap_utils import CabFinder
 from dsa.utils import calculate_distance, calculate_fare
+from dsa.ride_sharing import RideSharing
 
 # ---------------------------------------------
 # INITIALIZATION
@@ -19,6 +20,7 @@ app = Flask(__name__)
 CORS(app)
 sockets = Sockets(app)
 db = DatabaseUtils(db_path='database.db')
+ride_sharing = RideSharing(db_path='database.db')
 
 clients = []  # connected websocket clients
 active_cab_targets = {}  # { cab_id: { target_lat, target_lng, phase } }
@@ -125,10 +127,35 @@ def find_cab():
             })
 
         if not available_options:
+            # Add ride request to the database
+        user_id = 1 # Placeholder for actual user ID
+        new_request_id = db.add_ride_request(user_id, user_start_latitude, user_start_longitude, user_end_latitude, user_end_longitude, is_shared=False)
+
+        if new_request_id:
+            potential_shared_rides = ride_sharing.find_shared_ride(new_request_id)
+            for shared_ride_request in potential_shared_rides:
+                # For simplicity, let's assume the fare for shared ride is half of the individual fare
+                # A more complex fare division logic is in ride_sharing.py
+                total_distance_km = calculate_distance(
+                    user_start_latitude, user_start_longitude,
+                    user_end_latitude, user_end_longitude
+                )
+                fare = calculate_fare(total_distance_km) / 2 # Example fare division
+                available_options.append({
+                    'cab': {'cab_id': f'shared_{shared_ride_request[0]}', 'name': 'Shared Ride'},
+                    'pickup_distance': 0, # This needs to be calculated based on the shared ride's current position
+                    'is_shared': True,
+                    'status': 'Available',
+                    'total_distance': total_distance_km * 1000,
+                    'fare': fare,
+                    'primary_request_id': shared_ride_request[0]
+                })
+
+        if not available_options:
             return jsonify({'error': 'No cab available'}), 404
 
         available_options.sort(key=lambda x: x['pickup_distance'])
-        return jsonify({'available_cabs': available_options[:3]})
+        return jsonify({'available_cabs': available_options[:3], 'new_request_id': new_request_id})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -157,7 +184,32 @@ def book_cab():
 
         distance = calculate_distance(start_lat, start_lng, end_lat, end_lng)
         fare = calculate_fare(distance)
-        db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared)
+        if is_shared:
+            primary_request_id = data.get('primary_request_id')
+            if not primary_request_id:
+                return jsonify({'error': 'Missing primary_request_id for shared ride'}), 400
+            # Assuming new_request_id is the ID of the current user's ride request
+            # This needs to be passed from the frontend or retrieved from the db
+            # For now, let's assume the new_request_id is available in the data
+            new_request_id = data.get('new_request_id') # This needs to be handled properly
+            if not new_request_id:
+                return jsonify({'error': 'Missing new_request_id for shared ride'}), 400
+
+            # Calculate fare division (this is a simplified example)
+            primary_ride_distance = calculate_distance(start_lat, start_lng, end_lat, end_lng) # This should be the primary ride's actual distance
+            secondary_ride_distance = calculate_distance(start_lat, start_lng, end_lat, end_lng) # This should be the secondary ride's actual distance
+            total_fare = fare # Total fare for the combined ride
+
+            primary_fare, secondary_fare = ride_sharing.calculate_fare_division(
+                primary_ride_distance, secondary_ride_distance, total_fare
+            )
+
+            shared_ride_id = ride_sharing.confirm_shared_ride(primary_request_id, new_request_id, {'primary_fare': primary_fare, 'secondary_fare': secondary_fare})
+            if not shared_ride_id:
+                return jsonify({'error': 'Failed to confirm shared ride'}), 500
+            db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared, shared_ride_id=shared_ride_id)
+        else:
+            db.add_ride(cab_id, start_lat, start_lng, end_lat, end_lng, is_shared)
 
         # assign movement target to pickup (phase: to_pickup)
         active_cab_targets[cab_id] = {

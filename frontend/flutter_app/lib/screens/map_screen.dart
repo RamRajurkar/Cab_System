@@ -49,6 +49,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   String? _errorMessage;
   Map<String, dynamic>? _foundCabDetails;
   Map<String, dynamic>? _assignedCab;
+  String? _newRequestId;
 
   late DraggableScrollableController _sheetController;
 
@@ -199,29 +200,37 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       return;
     }
 
-    setState(() => _isLoading = true);
-
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/find_cab');
-
-    final body = json.encode({
-      'start_latitude': _sourceLocation!.latitude,
-      'start_longitude': _sourceLocation!.longitude,
-      'end_latitude': _destinationLocation!.latitude,
-      'end_longitude': _destinationLocation!.longitude,
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+      _foundCabDetails = null;
+      _assignedCab = null;
+      _newRequestId = null; // Reset new request ID
     });
 
     try {
-      final resp = await http.post(url,
-          headers: {'Content-Type': 'application/json'}, body: body);
+      final cabService = CabService();
+      final response = await cabService.findCab(
+        _sourceLocation!.latitude,
+        _sourceLocation!.longitude,
+        _destinationLocation!.latitude,
+        _destinationLocation!.longitude,
+      );
 
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body);
-        setState(() => _foundCabDetails = data);
+      if (response != null) {
+        setState(() {
+          _foundCabDetails = response;
+          _newRequestId = response['new_request_id']; // Store new request ID
+        });
+        _sheetController.animateTo(0.5, // Expand to show options
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut);
       } else {
-        setState(() => _errorMessage = 'Failed: ${resp.statusCode}');
+        setState(() => _errorMessage = 'No cabs or shared rides found.');
       }
     } catch (e) {
       setState(() => _errorMessage = 'Error finding cab: $e');
+      debugPrint('Error finding cab: $e');
     } finally {
       setState(() => _isLoading = false);
     }
@@ -229,72 +238,57 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   // ---------------------- BOOK CAB ----------------------
 
-  Future<void> _bookRide(Map<String, dynamic> option) async {
-    final cab = option['cab'];
-    final cabId = cab['cab_id'];
-
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/book_cab');
-
-    final body = json.encode({
-      'cab_id': cabId,
-      'start_latitude': _sourceLocation!.latitude,
-      'start_longitude': _sourceLocation!.longitude,
-      'end_latitude': _destinationLocation!.latitude,
-      'end_longitude': _destinationLocation!.longitude,
-      'is_shared': option['is_shared'] ?? false,
+  Future<void> _bookCab(Map<String, dynamic> selectedOption) async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
     });
 
     try {
-      setState(() => _isLoading = true);
+      final cabService = CabService();
+      final isShared = selectedOption['is_shared'] ?? false;
+      final primaryRequestId = selectedOption['primary_request_id'];
 
-      final resp = await http.post(url,
-          headers: {'Content-Type': 'application/json'}, body: body);
+      final response = await cabService.bookCab(
+        _sourceLocation!.latitude,
+        _sourceLocation!.longitude,
+        _destinationLocation!.latitude,
+        _destinationLocation!.longitude,
+        selectedOption['cab_id'],
+        isShared: isShared,
+        primaryRequestId: primaryRequestId,
+        newRequestId: _newRequestId, // Pass the new request ID
+      );
 
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body);
-        setState(() => _assignedCab = data);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ride booked successfully!')),
+      if (response != null && response['ride_id'] != null) {
+        setState(() {
+          _assignedCab = selectedOption;
+          _foundCabDetails = null;
+        });
+        _sheetController.animateTo(0.0, // Collapse the sheet
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut);
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => BookingStatusScreen(
+              rideId: response['ride_id'],
+              cabId: selectedOption['cab_id'],
+            ),
+          ),
         );
+      } else {
+        setState(() => _errorMessage = 'Failed to book cab.');
       }
     } catch (e) {
-      debugPrint("💥 Booking error: $e");
+      setState(() => _errorMessage = 'Error booking cab: $e');
+      debugPrint('Error booking cab: $e');
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _onBookNow(int cabId, Map<String, dynamic> option) async {
-    await _bookRide(option);
-
-    if (_assignedCab != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => BookingStatusScreen(
-            cabId: cabId,
-            cabInitialPosition:
-                LatLng(option['cab']['latitude'], option['cab']['longitude']),
-            userSource: _sourceLocation!,
-            userDestination: _destinationLocation!,
-            fare: double.parse(option['fare'].toString()),
-            cabName: option['cab']['name'] ?? 'Cab',
-            onCabsRefresh: _fetchCabLocations,
-            onRideCompleted: () {
-              setState(() {
-                _foundCabDetails = null;
-                _assignedCab = null;
-              });
-              _fetchCabLocations();
-            },
-          ),
-        ),
-      );
-    }
-  }
-
-  // ---------------------- UI BUILD ----------------------
+  // ---------------------- UI ----------------------
 
   @override
   Widget build(BuildContext context) {
@@ -461,9 +455,37 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
                       // -------- SHOW AVAILABLE CABS --------
 
-                      if (_foundCabDetails != null &&
-                          _foundCabDetails!['available_cabs'] != null) ...[
-                        ..._buildAvailableCabs(),
+                      if (_foundCabDetails != null) ...[
+                        if (_foundCabDetails!['individual_cabs'] != null)
+                          ...(_foundCabDetails!['individual_cabs'] as List)
+                              .map((cab) => RideCard(
+                                    cabName: cab['name'],
+                                    cabStatus: cab['status'] ?? 'Available',
+                                    distanceToCab: "${(cab['pickup_distance'] as num).toStringAsFixed(0)} m",
+                                    distanceToDestination: "${(cab['total_distance'] as num).toStringAsFixed(0)} m",
+                                    startCoords: '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
+                                    endCoords: '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
+                                    fare: (cab['fare'] as num).toDouble(),
+                                    cabId: cab['cab_id'],
+                                    onTap: () => _bookCab(cab),
+                                  ))
+                              .toList(),
+                        if (_foundCabDetails!['shared_rides'] != null)
+                          ...(_foundCabDetails!['shared_rides'] as List)
+                              .map((ride) => RideCard(
+                                    cabName: ride['name'],
+                                    cabStatus: ride['status'] ?? 'Available',
+                                    distanceToCab: "${(ride['pickup_distance'] as num).toStringAsFixed(0)} m",
+                                    distanceToDestination: "${(ride['total_distance'] as num).toStringAsFixed(0)} m",
+                                    startCoords: '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
+                                    endCoords: '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
+                                    fare: (ride['fare'] as num).toDouble(),
+                                    isShared: true,
+                                    primaryRequestId: ride['primary_request_id'],
+                                    cabId: ride['cab_id'],
+                                    onTap: () => _bookCab(ride),
+                                  ))
+                              .toList(),
                       ],
                     ],
                   ),
@@ -474,56 +496,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         ],
       ),
     );
-  }
-
-  // ---------------------- CAB LIST BUILDER ----------------------
-
-  List<Widget> _buildAvailableCabs() {
-    final List options = _foundCabDetails!['available_cabs'];
-
-    return List.generate(options.length, (i) {
-      final option = options[i];
-      final cab = option['cab'];
-
-      // Safe extraction
-      final rawFare = option['fare'];
-      final rawDist = option['total_distance'];
-      final rawPickup = option['pickup_distance'];
-
-      // Safe conversion
-      final fareValue = (rawFare is num)
-          ? rawFare.toDouble()
-          : double.tryParse(rawFare.toString()) ?? 0.0;
-
-      final distValue = (rawDist is num)
-          ? rawDist.toDouble()
-          : double.tryParse(rawDist.toString()) ?? 0.0;
-
-      final pickupValue = (rawPickup is num)
-          ? rawPickup.toDouble()
-          : double.tryParse(rawPickup.toString()) ?? 0.0;
-
-      return RideCard(
-        cabName: cab['name'] ?? 'Cab',
-        cabStatus: option['status'] ?? 'Available',
-
-        distanceToCab: "${pickupValue.toStringAsFixed(0)} m",
-        distanceToDestination: "${distValue.toStringAsFixed(0)} m",
-
-        startCoords:
-            '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
-
-        endCoords:
-            '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
-
-        isShared: option['is_shared'] ?? false,
-
-        fare: fareValue.toStringAsFixed(2),
-
-        cabId: cab['cab_id'],
-        onBookNow: (cabId) => _onBookNow(cabId, option),
-      );
-    });
   }
 
   // ---------------------- TEXT FIELD ----------------------
