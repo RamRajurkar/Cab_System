@@ -387,7 +387,7 @@ class DatabaseUtils:
             return None
 
         try:
-            self.cursor.execute("SELECT * FROM ride_requests WHERE id = ?", (request_id,))
+            self.cursor.execute("SELECT * FROM ride_requests WHERE request_id = ?", (request_id,))
             return self.cursor.fetchone()
         except sqlite3.Error as e:
             print(f"Error retrieving ride request: {e}")
@@ -403,7 +403,7 @@ class DatabaseUtils:
             return None
 
         try:
-            self.cursor.execute("SELECT * FROM shared_rides WHERE id = ?", (shared_ride_id,))
+            self.cursor.execute("SELECT * FROM shared_rides WHERE shared_ride_id = ?", (shared_ride_id,))
             return self.cursor.fetchone()
         except sqlite3.Error as e:
             print(f"Error retrieving shared ride: {e}")
@@ -452,7 +452,7 @@ class DatabaseUtils:
 
         try:
             self.cursor.execute(
-                "UPDATE ride_requests SET is_shared = ? WHERE id = ?",
+                "UPDATE ride_requests SET is_shared = ? WHERE request_id = ?",
                 (is_shared, request_id)
             )
             self.conn.commit()

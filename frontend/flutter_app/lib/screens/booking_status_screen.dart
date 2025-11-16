@@ -25,6 +25,7 @@ class BookingStatusScreen extends StatefulWidget {
   final String cabName;
   final VoidCallback onCabsRefresh;
   final VoidCallback onRideCompleted;
+  final int rideId;
 
   const BookingStatusScreen({
     Key? key,
@@ -36,6 +37,7 @@ class BookingStatusScreen extends StatefulWidget {
     required this.cabName,
     required this.onCabsRefresh,
     required this.onRideCompleted,
+    required this.rideId,
   }) : super(key: key);
 
   @override

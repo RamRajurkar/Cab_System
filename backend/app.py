@@ -133,23 +133,24 @@ def find_cab():
 
         if new_request_id:
             potential_shared_rides = ride_sharing.find_shared_ride(new_request_id)
-            for shared_ride_request in potential_shared_rides:
-                # For simplicity, let's assume the fare for shared ride is half of the individual fare
-                # A more complex fare division logic is in ride_sharing.py
-                total_distance_km = calculate_distance(
-                    user_start_latitude, user_start_longitude,
-                    user_end_latitude, user_end_longitude
-                )
-                fare = calculate_fare(total_distance_km) / 2 # Example fare division
-                available_options.append({
-                    'cab': {'cab_id': f'shared_{shared_ride_request[0]}', 'name': 'Shared Ride'},
-                    'pickup_distance': 0, # This needs to be calculated based on the shared ride's current position
-                    'is_shared': True,
-                    'status': 'Available',
-                    'total_distance': total_distance_km * 1000,
-                    'fare': fare,
-                    'primary_request_id': shared_ride_request[0]
-                })
+            if potential_shared_rides:
+                for shared_ride_request in potential_shared_rides:
+                    # For simplicity, let's assume the fare for shared ride is half of the individual fare
+                    # A more complex fare division logic is in ride_sharing.py
+                    total_distance_km = calculate_distance(
+                        user_start_latitude, user_start_longitude,
+                        user_end_latitude, user_end_longitude
+                    )
+                    fare = calculate_fare(total_distance_km) / 2 # Example fare division
+                    available_options.append({
+                        'cab': {'cab_id': f'shared_{shared_ride_request[0]}', 'name': 'Shared Ride'},
+                        'pickup_distance': 0, # This needs to be calculated based on the shared ride's current position
+                        'is_shared': True,
+                        'status': 'Available',
+                        'total_distance': total_distance_km * 1000,
+                        'fare': fare,
+                        'primary_request_id': shared_ride_request[0]
+                    })
 
         if not available_options:
             return jsonify({'error': 'No cab available'}), 404

@@ -3,30 +3,18 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 
 class CabService {
-  Future<List<dynamic>> getCabs() async {
-    final url = Uri.parse("${ApiConfig.baseUrl}/api/cabs");
-
-    try {
-      final response = await http.get(url);
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception("Server error: ${response.statusCode}");
-      }
-    } catch (e) {
-      throw Exception("Error fetching cab locations: $e");
-    }
-  }
-
-
-  Future<Map<String, dynamic>> findCab(double startLatitude, double startLongitude, double endLatitude, double endLongitude) async {
-    final url = Uri.parse("${ApiConfig.baseUrl}/api/find_cab");
+  Future<Map<String, dynamic>?> findCab(
+    double startLatitude,
+    double startLongitude,
+    double endLatitude,
+    double endLongitude,
+  ) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/find_cab');
     try {
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+        body: json.encode({
           'start_latitude': startLatitude,
           'start_longitude': startLongitude,
           'end_latitude': endLatitude,
@@ -35,44 +23,56 @@ class CabService {
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return json.decode(response.body);
       } else {
-        throw Exception("Server error: ${response.statusCode}");
+        print('Failed to find cab: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return null;
       }
     } catch (e) {
-      throw Exception("Error finding cab: $e");
+      print('Error finding cab: $e');
+      return null;
     }
   }
 
-  Future<Map<String, dynamic>> bookCab(String cabId, double startLatitude, double startLongitude, double endLatitude, double endLongitude, bool isShared, {int? primaryRequestId, int? newRequestId}) async {
-    final url = Uri.parse("${ApiConfig.baseUrl}/api/book_cab");
+  Future<Map<String, dynamic>?> bookCab(
+    double startLatitude,
+    double startLongitude,
+    double endLatitude,
+    double endLongitude,
+    int cabId,
+    {bool isShared = false,
+    String? primaryRequestId,
+    String? newRequestId,
+    }
+  ) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/book_cab');
     try {
-      final body = {
-        'cab_id': cabId,
-        'start_latitude': startLatitude,
-        'start_longitude': startLongitude,
-        'end_latitude': endLongitude,
-        'end_longitude': endLongitude,
-        'is_shared': isShared,
-      };
-      if (isShared) {
-        body['primary_request_id'] = primaryRequestId;
-        body['new_request_id'] = newRequestId;
-      }
-
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
+        body: json.encode({
+          'start_latitude': startLatitude,
+          'start_longitude': startLongitude,
+          'end_latitude': endLongitude,
+          'end_longitude': endLongitude,
+          'cab_id': cabId,
+          'is_shared': isShared,
+          'primary_request_id': primaryRequestId,
+          'new_request_id': newRequestId,
+        }),
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return json.decode(response.body);
       } else {
-        throw Exception("Server error: ${response.statusCode}");
+        print('Failed to book cab: ${response.statusCode}');
+        print('Response body: ${response.body}');
+        return null;
       }
     } catch (e) {
-      throw Exception("Error booking cab: $e");
+      print('Error booking cab: $e');
+      return null;
     }
   }
 

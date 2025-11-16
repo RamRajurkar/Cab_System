@@ -18,6 +18,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import '../config/api_config.dart';
+import '../services/cab_service.dart';
 import '../widgets/ride_card.dart';
 import 'booking_status_screen.dart';
 
@@ -51,6 +52,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _assignedCab;
   String? _newRequestId;
 
+  late CabService _cabService;
+
   late DraggableScrollableController _sheetController;
 
   @override
@@ -70,6 +73,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     _animatedMapController = AnimatedMapController(vsync: this);
     _sheetController = DraggableScrollableController();
+    _cabService = CabService();
 
     _initDatabase();
     _getCurrentLocation();
@@ -209,8 +213,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
 
     try {
-      final cabService = CabService();
-      final response = await cabService.findCab(
+      // final cabService = CabService(); // No longer needed as it's a class member
+      final response = await _cabService.findCab(
         _sourceLocation!.latitude,
         _sourceLocation!.longitude,
         _destinationLocation!.latitude,
@@ -245,16 +249,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
 
     try {
-      final cabService = CabService();
+      // final cabService = CabService(); // No longer needed as it's a class member
       final isShared = selectedOption['is_shared'] ?? false;
       final primaryRequestId = selectedOption['primary_request_id'];
 
-      final response = await cabService.bookCab(
+      final response = await _cabService.bookCab(
         _sourceLocation!.latitude,
         _sourceLocation!.longitude,
         _destinationLocation!.latitude,
         _destinationLocation!.longitude,
-        selectedOption['cab_id'],
+        selectedOption['cab_id'] as int,
         isShared: isShared,
         primaryRequestId: primaryRequestId,
         newRequestId: _newRequestId, // Pass the new request ID
@@ -274,6 +278,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             builder: (context) => BookingStatusScreen(
               rideId: response['ride_id'],
               cabId: selectedOption['cab_id'],
+              cabInitialPosition: LatLng(selectedOption['latitude'], selectedOption['longitude']),
+              userSource: _sourceLocation!,
+              userDestination: _destinationLocation!,
+              fare: selectedOption['fare'].toDouble(),
+              cabName: selectedOption['cab_name'],
+              onCabsRefresh: _fetchCabLocations,
+              onRideCompleted: () {
+                _sheetController.animateTo(0.0,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOut);
+                _fetchCabLocations();
+              },
             ),
           ),
         );
@@ -459,33 +475,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         if (_foundCabDetails!['individual_cabs'] != null)
                           ...(_foundCabDetails!['individual_cabs'] as List)
                               .map((cab) => RideCard(
-                                    cabName: cab['name'],
-                                    cabStatus: cab['status'] ?? 'Available',
-                                    distanceToCab: "${(cab['pickup_distance'] as num).toStringAsFixed(0)} m",
-                                    distanceToDestination: "${(cab['total_distance'] as num).toStringAsFixed(0)} m",
-                                    startCoords: '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
-                                    endCoords: '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
-                                    fare: (cab['fare'] as num).toDouble(),
-                                    cabId: cab['cab_id'],
-                                    onTap: () => _bookCab(cab),
-                                  ))
-                              .toList(),
+                                     cabName: cab['name'],
+                                     fare: (cab['fare'] as num).toDouble(),
+                                     cabId: cab['cab_id'],
+                                     onTap: () => _bookCab(cab),
+                                   ))
+                               .toList(),
                         if (_foundCabDetails!['shared_rides'] != null)
                           ...(_foundCabDetails!['shared_rides'] as List)
                               .map((ride) => RideCard(
-                                    cabName: ride['name'],
-                                    cabStatus: ride['status'] ?? 'Available',
-                                    distanceToCab: "${(ride['pickup_distance'] as num).toStringAsFixed(0)} m",
-                                    distanceToDestination: "${(ride['total_distance'] as num).toStringAsFixed(0)} m",
-                                    startCoords: '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
-                                    endCoords: '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
-                                    fare: (ride['fare'] as num).toDouble(),
-                                    isShared: true,
-                                    primaryRequestId: ride['primary_request_id'],
-                                    cabId: ride['cab_id'],
-                                    onTap: () => _bookCab(ride),
-                                  ))
-                              .toList(),
+                                     cabName: ride['name'],
+                                     fare: (ride['fare'] as num).toDouble(),
+                                     isShared: true,
+                                     primaryRequestId: ride['primary_request_id'],
+                                     cabId: ride['cab_id'],
+                                     onTap: () => _bookCab(ride),
+                                   ))
+                               .toList(),
                       ],
                     ],
                   ),
