@@ -96,6 +96,8 @@ class DatabaseUtils:
             )
             ''')
 
+            # Create rides table
+            self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS rides (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 cab_id INTEGER NOT NULL,
@@ -109,6 +111,7 @@ class DatabaseUtils:
                 FOREIGN KEY (cab_id) REFERENCES cabs (cab_id),
                 FOREIGN KEY (shared_ride_id) REFERENCES shared_rides(shared_ride_id)
             )
+            ''')
 
             # Create users table
             self.cursor.execute('''
@@ -227,7 +230,7 @@ class DatabaseUtils:
         try:
             if latitude is not None and longitude is not None:
                 self.cursor.execute(
-                    "UPDATE cabs SET status = ?, x = ?, y = ? WHERE cab_id = ?",
+                    "UPDATE cabs SET status = ?, latitude = ?, longitude = ? WHERE cab_id = ?",
                     (status, latitude, longitude, cab_id)
                 )
             else:

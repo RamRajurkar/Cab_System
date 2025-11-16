@@ -126,8 +126,8 @@ def find_cab():
                 'fare': fare
             })
 
-        if not available_options:
-            # Add ride request to the database
+        new_request_id = None
+        # Add ride request to the database
         user_id = 1 # Placeholder for actual user ID
         new_request_id = db.add_ride_request(user_id, user_start_latitude, user_start_longitude, user_end_latitude, user_end_longitude, is_shared=False)
 
