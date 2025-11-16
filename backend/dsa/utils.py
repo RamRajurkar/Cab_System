@@ -28,3 +28,30 @@ def calculate_fare(distance):
     BASE_FARE = 50  # Base fare in INR
     PER_KM_RATE = 15  # Rate per kilometer in INR
     return BASE_FARE + (PER_KM_RATE * distance)
+
+def is_point_on_segment(px, py, ax, ay, bx, by, tolerance=0.001):
+    """
+    Check if point P(px, py) is on the segment AB.
+    """
+    # Calculate distances
+    dist_ab = calculate_distance(ax, ay, bx, by)
+    dist_ap = calculate_distance(ax, ay, px, py)
+    dist_pb = calculate_distance(px, py, bx, by)
+
+    # Check if the sum of distances AP and PB is approximately equal to AB
+    return abs(dist_ap + dist_pb - dist_ab) < tolerance
+
+def is_point_on_path(px, py, path, tolerance=0.001):
+    """
+    Check if point P(px, py) is on any segment of a given path.
+    Path is a list of (latitude, longitude) tuples.
+    """
+    if len(path) < 2:
+        return False
+
+    for i in range(len(path) - 1):
+        ax, ay = path[i]
+        bx, by = path[i+1]
+        if is_point_on_segment(px, py, ax, ay, bx, by, tolerance):
+            return True
+    return False

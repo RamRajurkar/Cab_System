@@ -18,7 +18,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowBanner: false,
+debugShowCheckedModeBanner: false,
       title: "Smart Cab Allocation",
       initialRoute: "/home",
       routes: {

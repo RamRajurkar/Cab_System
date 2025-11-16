@@ -277,71 +277,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
   }
 
-  // ---------------------- FETCH CAB LOCATIONS (fallback API) ----------------------
-  Future<void> _fetchCabLocations() async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/cabs');
-
-    try {
-      final resp = await http.get(url);
-
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = json.decode(resp.body);
-
-        // Build/merge into _cabMap but do not overwrite ongoing animations positions:
-        for (var c in data) {
-          if (c['latitude'] != null && c['longitude'] != null) {
-            final cabId = c['cab_id'];
-            final pos = LatLng((c['latitude'] as num).toDouble(),
-                (c['longitude'] as num).toDouble());
-            final existing = _cabMap[cabId];
-            if (existing == null) {
-              _cabMap[cabId] = {
-                'cab_id': cabId,
-                'name': c['name'] ?? 'Cab',
-                'status': c['status'] ?? 'Unknown',
-                'position': pos,
-              };
-            } else {
-              // If no ongoing animation, snap to API position
-              if (!_animTimers.containsKey(cabId)) {
-                existing['position'] = pos;
-              }
-              existing['status'] = c['status'] ?? existing['status'];
-              existing['name'] = c['name'] ?? existing['name'];
-            }
-          }
-        }
-
-        // Remove cabs not returned by API? optional
-        setState(() {});
-      }
-    } catch (e) {
-      debugPrint("💥 Fetch cabs error: $e");
-    }
-  }
-
   // ---------------------- ROUTE / FIND / BOOK (unchanged logic but safe conversions) ----------------------
-  Future<void> _calculateRoute() async {
-    if (_sourceLocation == null || _destinationLocation == null) return;
-
-    try {
-      final url = Uri.parse(
-          'https://router.project-osrm.org/route/v1/driving/${_sourceLocation!.longitude},${_sourceLocation!.latitude};${_destinationLocation!.longitude},${_destinationLocation!.latitude}?overview=full&geometries=geojson');
-
-      final resp = await http.get(url);
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body);
-        if (data['routes'] != null && data['routes'].isNotEmpty) {
-          final route = data['routes'][0]['geometry']['coordinates'] as List;
-          setState(() {
-            _routePoints = route.map((e) => LatLng(e[1], e[0])).toList();
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint("💥 Route error: $e");
-    }
-  }
 
   Future<void> _findCab() async {
     if (_sourceLocation == null || _destinationLocation == null) {
@@ -350,80 +286,42 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
     setState(() => _isLoading = true);
 
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/find_cab');
-    final body = json.encode({
-      'start_latitude': _sourceLocation!.latitude,
-      'start_longitude': _sourceLocation!.longitude,
-      'end_latitude': _destinationLocation!.latitude,
-      'end_longitude': _destinationLocation!.longitude,
-    });
-
     try {
-      final resp = await http.post(url,
-          headers: {'Content-Type': 'application/json'}, body: body);
+      final url = Uri.parse('${ApiConfig.baseUrl}/api/find_cab');
+      final body = json.encode({
+        'start_latitude': _sourceLocation!.latitude,
+        'start_longitude': _sourceLocation!.longitude,
+        'end_latitude': _destinationLocation!.latitude,
+        'end_longitude': _destinationLocation!.longitude,
+      });
+
+      final resp = await http.post(url, headers: {'Content-Type': 'application/json'}, body: body);
+
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
-        setState(() => _foundCabDetails = data);
+        setState(() {
+          _foundCabDetails = data;
+          _errorMessage = null;
+        });
       } else {
-        setState(() => _errorMessage = 'Failed: ${resp.statusCode}');
+        setState(() {
+          _foundCabDetails = null;
+          _errorMessage = 'Error finding cab: ${resp.statusCode}';
+        });
       }
     } catch (e) {
-      setState(() => _errorMessage = 'Error finding cab: $e');
+      setState(() {
+        _foundCabDetails = null;
+        _errorMessage = 'Error finding cab: $e';
+      });
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _bookRide(Map<String, dynamic> option) async {
-    final cab = option['cab'];
-    final cabId = cab['cab_id'];
 
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/book_cab');
 
-    final body = json.encode({
-      'cab_id': cabId,
-      'start_latitude': _sourceLocation!.latitude,
-      'start_longitude': _sourceLocation!.longitude,
-      'end_latitude': _destinationLocation!.latitude,
-      'end_longitude': _destinationLocation!.longitude,
-      'is_shared': option['is_shared'] ?? false,
-    });
 
-    try {
-      setState(() => _isLoading = true);
-      final resp = await http.post(url,
-          headers: {'Content-Type': 'application/json'}, body: body);
-
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body);
-        setState(() => _assignedCab = data);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ride booked successfully!')),
-        );
-      } else {
-        debugPrint('Booking HTTP ${resp.statusCode}: ${resp.body}');
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Booking failed: ${resp.statusCode}')));
-      }
-    } catch (e) {
-      debugPrint("💥 Booking error: $e");
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Booking error')));
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _onBookNow(int cabId, Map<String, dynamic> option) async {
-    await _bookRide(option);
-    if (_assignedCab != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => BookingStatusScreen(
-            cabId: cabId,
-            cabInitialPosition:
                 LatLng(option['cab']['latitude'], option['cab']['longitude']),
             userSource: _sourceLocation!,
             userDestination: _destinationLocation!,
@@ -604,12 +502,84 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
-              );
+      
             },
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _bookRide(Map<String, dynamic> cabOption, bool isShared) async {
+    if (_sourceLocation == null || _destinationLocation == null) {
+      setState(() => _errorMessage = 'Select both pickup & drop.');
+      return;
+    }
+    setState(() => _isLoading = true);
+
+    try {
+      final url = Uri.parse('${ApiConfig.baseUrl}/api/book_ride');
+      final body = json.encode({
+        'cab_id': cabOption['cab_id'],
+        'start_latitude': _sourceLocation!.latitude,
+        'start_longitude': _sourceLocation!.longitude,
+        'end_latitude': _destinationLocation!.latitude,
+        'end_longitude': _destinationLocation!.longitude,
+        'is_shared': isShared,
+      });
+
+      final resp = await http.post(url, headers: {'Content-Type': 'application/json'}, body: body);
+
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        setState(() {
+          _assignedCab = data;
+          _errorMessage = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ride booked successfully!')),);
+      } else {
+        debugPrint('Booking HTTP ${resp.statusCode}: ${resp.body}');
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Booking failed: ${resp.statusCode}')));
+      }
+    } catch (e) {
+      debugPrint("💥 Booking error: $e");
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Booking error')));
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _onBookNow(int cabId) async {
+    if (_foundCabDetails == null || _foundCabDetails!['available_cabs'] == null) {
+      debugPrint('Error: _foundCabDetails or available_cabs is null');
+      return;
+    }
+    final option = _foundCabDetails['available_cabs'].firstWhere(
+      (opt) => opt['cab']['cab_id'] == cabId,
+      orElse: () => null,
+    );
+    if (option == null) {
+      debugPrint('Error: Option not found for cabId $cabId');
+      return;
+    }
+    await _bookRide(option, option['is_shared'] ?? false);
+    if (_assignedCab != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BookingStatusScreen(
+            cabId: cabId,
+            cabInitialPosition:
+                LatLng(option['cab']['latitude'], option['cab']['longitude']),
+            userSource: _sourceLocation!,
+            userDestination: _destinationLocation!,
+          ),
+        ),
+      );
+    }
   }
 
   // ---------------------- CAB LIST BUILDER ----------------------
@@ -622,6 +592,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
       final rawFare = option['fare'];
       final rawDist = option['total_distance'];
+
+
+
+
       final rawPickup = option['pickup_distance'];
 
       final fareValue = (rawFare is num)
@@ -636,6 +610,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ? rawPickup.toDouble()
           : double.tryParse(rawPickup.toString()) ?? 0.0;
 
+      final isShared = option['is_shared'] ?? false;
+
       return RideCard(
         cabName: cab['name'] ?? 'Cab',
         cabStatus: option['status'] ?? 'Available',
@@ -647,10 +623,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             '${_sourceLocation?.latitude.toStringAsFixed(3)}, ${_sourceLocation?.longitude.toStringAsFixed(3)}',
         endCoords:
             '${_destinationLocation?.latitude.toStringAsFixed(3)}, ${_destinationLocation?.longitude.toStringAsFixed(3)}',
-        isShared: option['is_shared'] ?? false,
+        isShared: isShared,
         fare: fareValue.toStringAsFixed(2),
         cabId: cab['cab_id'],
-        onBookNow: (cabId) => _onBookNow(cabId, option),
+        onBookNow: _onBookNow,
       );
     });
   }

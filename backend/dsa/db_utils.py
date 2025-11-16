@@ -56,6 +56,7 @@ class DatabaseUtils:
                     user_end_y REAL NOT NULL,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     shared BOOLEAN DEFAULT 0,
+                    status TEXT DEFAULT 'on_trip',
                     FOREIGN KEY (cab_id) REFERENCES cabs (cab_id)
                 )
             ''')
@@ -172,7 +173,7 @@ class DatabaseUtils:
     # ----------------------------------------------------
     # ADD RIDE
     # ----------------------------------------------------
-    def add_ride(self, cab_id, start_lat, start_lng, end_lat, end_lng, shared):
+    def add_ride(self, cab_id, start_lat, start_lng, end_lat, end_lng, shared, status='on_trip'):
         conn = self.connect()
         if not conn:
             return False
@@ -182,9 +183,9 @@ class DatabaseUtils:
         try:
             cursor.execute('''
                 INSERT INTO rides (cab_id, user_start_x, user_start_y,
-                                   user_end_x, user_end_y, shared)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (cab_id, start_lat, start_lng, end_lat, end_lng, shared))
+                                   user_end_x, user_end_y, shared, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (cab_id, start_lat, start_lng, end_lat, end_lng, shared, status))
 
             conn.commit()
             return True
@@ -192,6 +193,33 @@ class DatabaseUtils:
         except sqlite3.Error as e:
             print("Error adding ride:", e)
             return False
+        finally:
+            conn.close()
+
+    # ----------------------------------------------------
+    # GET ACTIVE RIDES
+    # ----------------------------------------------------
+    def get_active_rides(self):
+        conn = self.connect()
+        if not conn:
+            return []
+
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT id, cab_id, user_start_x, user_start_y, user_end_x, user_end_y, shared FROM rides WHERE status = 'on_trip'")
+            result = cursor.fetchall()
+            return [{
+                "ride_id": r[0],
+                "cab_id": r[1],
+                "start_latitude": r[2],
+                "start_longitude": r[3],
+                "end_latitude": r[4],
+                "end_longitude": r[5],
+                "shared": bool(r[6])
+            } for r in result]
+        except sqlite3.Error as e:
+            print("Error fetching active rides:", e)
+            return []
         finally:
             conn.close()
 

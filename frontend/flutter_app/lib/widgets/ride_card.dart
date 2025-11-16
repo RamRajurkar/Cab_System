@@ -8,11 +8,12 @@ class RideCard extends StatelessWidget {
   final String startCoords;
   final String endCoords;
   final bool isShared;
-  final String fare;
   final String? timestamp;
   final int? cabId;
   final ValueChanged<int>? onCompleteRide;
   final VoidCallback? onTap;
+  final String? fare;
+  final String? totalDistance;
   final ValueChanged<int>? onBookNow;
 
   const RideCard({
@@ -24,24 +25,25 @@ class RideCard extends StatelessWidget {
     required this.startCoords,
     required this.endCoords,
     required this.isShared,
-    required this.fare,
     this.timestamp,
     this.cabId,
     this.onCompleteRide,
     this.onTap,
+    this.fare,
+    this.totalDistance,
     this.onBookNow,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap, // Make the entire card tappable
+      onTap: onTap,
       child: Card(
-        elevation: 6, // Slightly higher elevation for a more prominent look
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), // Add margin for better spacing
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(20.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -50,63 +52,70 @@ class RideCard extends StatelessWidget {
                 children: [
                   Text(
                     cabName,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: Theme.of(context).colorScheme.primary,
-                        ), // Use theme for better consistency
+                        ),
                   ),
                   _buildStatusChip(context),
                 ],
               ),
-              const SizedBox(height: 12),
-              Divider(height: 1, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1)), // Add a divider for visual separation
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+              Divider(height: 1, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.15)),
+              const SizedBox(height: 16),
               _buildInfoRow(context, Icons.location_on, 'From:', startCoords),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               _buildInfoRow(context, Icons.location_searching, 'To:', endCoords),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               _buildInfoRow(context, Icons.straighten, 'Distance to Cab:', distanceToCab),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               _buildInfoRow(context, Icons.alt_route, 'Distance to Destination:', distanceToDestination),
+              if (totalDistance != null) ...[
+                const SizedBox(height: 10),
+                _buildInfoRow(context, Icons.map, 'Total Distance:', totalDistance!),
+              ],
+              if (fare != null) ...[
+                const SizedBox(height: 10),
+                _buildInfoRow(context, Icons.attach_money, 'Fare:', fare!),
+              ],
               if (timestamp != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 _buildInfoRow(context, Icons.access_time, 'Time:', timestamp!),
               ],
               if (onBookNow != null && cabId != null) ...[
-
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 Center(
                   child: ElevatedButton.icon(
                     onPressed: () => onBookNow!(cabId!),
                     icon: const Icon(Icons.book_online, color: Colors.white),
                     label: Text(
                       'Book Now',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.primary, // Use theme color
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      elevation: 4,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                      elevation: 5,
                     ),
                   ),
                 ),
               ],
               if (onCompleteRide != null && cabId != null) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 Center(
                   child: ElevatedButton.icon(
-                        onPressed: () => onCompleteRide!(cabId!),
+                    onPressed: () => onCompleteRide!(cabId!),
                     icon: const Icon(Icons.check_circle_outline, color: Colors.white),
                     label: Text(
                       'Complete Ride',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.secondary, // Use theme color
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      elevation: 4,
+                      backgroundColor: Theme.of(context).colorScheme.secondary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                      elevation: 5,
                     ),
                   ),
                 ),
@@ -142,14 +151,14 @@ class RideCard extends StatelessWidget {
     }
 
     return Chip(
-      avatar: Icon(chipIcon, color: Theme.of(context).colorScheme.onPrimary, size: 16),
+      avatar: Icon(chipIcon, color: Theme.of(context).colorScheme.onPrimary, size: 18),
       label: Text(
         statusText,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold),
       ),
       backgroundColor: chipColor,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Slightly more vertical padding
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)), // More rounded corners
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
     );
   }
 

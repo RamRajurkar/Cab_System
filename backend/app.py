@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from dsa.db_utils import DatabaseUtils
 from dsa.heap_utils import CabFinder
-from dsa.utils import calculate_distance, calculate_fare
+from dsa.utils import calculate_distance, calculate_fare, is_point_on_path
 
 # -----------------------------------------------------------------------------
 # INIT
@@ -136,12 +136,57 @@ def find_cab():
         })
 
     results.sort(key=lambda x: x["pickup_distance"])
+
+    # Find potential shared rides
+    shared_rides = find_shared_ride(start_lat, start_lng, end_lat, end_lng)
+    results.extend(shared_rides)
+
     return jsonify({"available_cabs": results})
 
 
 # -----------------------------------------------------------------------------
 # BOOK CAB
 # -----------------------------------------------------------------------------
+@app.route("/api/book_cab", methods=["POST"])
+def find_shared_ride(start_lat, start_lng, end_lat, end_lng):
+    potential_shared_rides = []
+    active_rides = db.get_active_rides()
+
+    for ride in active_rides:
+        cab_id = ride['cab_id']
+        cab = next((c for c in db.get_all_cabs() if c["cab_id"] == cab_id), None)
+        if not cab or cab['status'] != 'Busy':
+            continue
+
+        # Get the path of the active ride (simplified for now, ideally from OSRM)
+        # For now, we'll consider a direct line between source and destination of the active ride
+        active_ride_path = [
+            (ride['start_latitude'], ride['start_longitude']),
+            (ride['end_latitude'], ride['end_longitude'])
+        ]
+
+        # Check if new rider's source and destination are on the active ride's path
+        is_source_on_path = is_point_on_path(start_lat, start_lng, active_ride_path)
+        is_destination_on_path = is_point_on_path(end_lat, end_lng, active_ride_path)
+
+        if is_source_on_path and is_destination_on_path:
+            # Calculate new fare (e.g., 70% of original fare for shared ride)
+            original_total_dist = calculate_distance(ride['start_latitude'], ride['start_longitude'], ride['end_latitude'], ride['end_longitude'])
+            new_ride_dist = calculate_distance(start_lat, start_lng, end_lat, end_lng)
+            shared_fare = calculate_fare(new_ride_dist) * 0.7 # Example: 30% discount for shared
+
+            potential_shared_rides.append({
+                "cab": cab,
+                "pickup_distance": calculate_distance(start_lat, start_lng, cab['latitude'], cab['longitude']) * 1000,
+                "total_distance": new_ride_dist * 1000,
+                "fare": shared_fare,
+                "status": "Shared",
+                "is_shared": True,
+                "original_ride_id": ride['ride_id']
+            })
+    return potential_shared_rides
+
+
 @app.route("/api/book_cab", methods=["POST"])
 def book_cab():
     data = request.json
@@ -150,19 +195,26 @@ def book_cab():
     if not all(k in data for k in required):
         return jsonify({"error": "Missing booking data"}), 400
 
+    start_latitude = data["start_latitude"]
+    start_longitude = data["start_longitude"]
+    end_latitude = data["end_latitude"]
+    end_longitude = data["end_longitude"]
     cab_id = data["cab_id"]
-    s_lat = data["start_latitude"]
-    s_lng = data["start_longitude"]
-    e_lat = data["end_latitude"]
-    e_lng = data["end_longitude"]
-    is_shared = data.get("is_shared", False)
+    is_shared = data.get('is_shared', False)
 
     cab = next((c for c in db.get_all_cabs() if c["cab_id"] == cab_id), None)
     if not cab:
         return jsonify({"error": "Cab not found"}), 404
 
     db.update_cab_status(cab_id, "Busy")
-    db.add_ride(cab_id, s_lat, s_lng, e_lat, e_lng, is_shared)
+    original_ride_id = data.get('original_ride_id', None)
+
+    if is_shared and original_ride_id:
+        # Logic for shared ride booking (e.g., update existing ride, add new entry)
+        # For now, we'll just add a new ride with shared status
+        db.add_ride(cab_id, s_lat, s_lng, e_lat, e_lng, True, status='on_trip')
+    else:
+        db.add_ride(cab_id, s_lat, s_lng, e_lat, e_lng, False, status='on_trip')
 
     active_cab_targets[cab_id] = {
         "target_lat": s_lat,
