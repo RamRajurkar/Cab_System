@@ -40,7 +40,7 @@ def get_cabs():
 @app.route('/api/cab_register', methods=['POST'])
 def cab_register():
     data = request.get_json()
-    cab_id = data.get('cab_id')
+    cab_id = str(data.get('cab_id'))
     name = data.get('name')
     rto_number = data.get('rto_number')
     driver_name = data.get('driver_name')
@@ -156,7 +156,7 @@ def find_cab():
             return jsonify({'error': 'No cab available'}), 404
 
         available_options.sort(key=lambda x: x['pickup_distance'])
-        return jsonify({'available_cabs': available_options[:3], 'new_request_id': new_request_id})
+        return jsonify({'available_cabs': available_options[:3], 'new_request_id': str(new_request_id)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -164,7 +164,7 @@ def find_cab():
 @app.route('/api/book_cab', methods=['POST'])
 def book_cab():
     data = request.json
-    cab_id = data.get('cab_id')
+    cab_id = str(data.get('cab_id'))
     start_lat = data.get('start_latitude')
     start_lng = data.get('start_longitude')
     end_lat = data.get('end_latitude')
@@ -242,7 +242,7 @@ def book_cab():
 @app.route('/api/reset_cab_status', methods=['POST'])
 def reset_cab_status():
     data = request.get_json()
-    cab_id = data.get('cab_id')
+    cab_id = str(data.get('cab_id'))
     try:
         if cab_id:
             updated = db.update_cab_status(cab_id, 'Available')

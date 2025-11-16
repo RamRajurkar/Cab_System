@@ -179,7 +179,7 @@ class DatabaseUtils:
         try:
             self.cursor.execute("SELECT cab_id, name, rto_number, driver_name, latitude, longitude, status FROM cabs")
             cabs = [{
-                'cab_id': row[0],
+                'cab_id': str(row[0]),
                 'name': row[1],
                 'rto_number': row[2],
                 'driver_name': row[3],
@@ -550,7 +550,7 @@ class DatabaseUtils:
             """)
             
             active_rides = [{
-                'cab_id': row[0],
+                'cab_id': str(row[0]),
                 'cab_name': row[1],
                 'cab_latitude': row[2],
                 'cab_longitude': row[3],
