@@ -204,6 +204,12 @@ def reset_cab_status():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/ride_history', methods=['GET'])
+def ride_history():
+    rides = db.get_ride_history()
+    return jsonify(rides), 200
+
+
 @app.route('/api/complete_ride/<int:cab_id>', methods=['GET'])
 def complete_ride(cab_id):
     try:

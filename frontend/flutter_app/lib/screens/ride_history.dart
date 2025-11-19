@@ -114,12 +114,13 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                           padding: const EdgeInsets.only(bottom: 16),
                           child: RideCard(
                             cabName: ride['cab_name'],
-                            cabStatus: ride['shared'] ? 'Shared' : 'Single',
-                            distance: 'N/A',  // Distance not available in history
+                            cabStatus: ride['shared'] ? 'Shared Ride' : 'Single Ride',
                             startCoords: '(${ride['start_x']}, ${ride['start_y']})',
                             endCoords: '(${ride['end_x']}, ${ride['end_y']})',
                             isShared: ride['shared'],
+                            fare: '₹${(ride['fare'] ?? 0).toString()}',
                             timestamp: formattedDate,
+                            rideStatus: 'Completed',
                           ),
                         );
                       },

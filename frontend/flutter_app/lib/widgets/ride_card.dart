@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 class RideCard extends StatelessWidget {
   final String cabName;
   final String cabStatus;
-  final String distanceToCab;
-  final String distanceToDestination;
+  final String? distanceToCab;
+  final String? distanceToDestination;
   final String startCoords;
   final String endCoords;
   final bool isShared;
@@ -14,13 +14,14 @@ class RideCard extends StatelessWidget {
   final ValueChanged<int>? onCompleteRide;
   final VoidCallback? onTap;
   final ValueChanged<int>? onBookNow;
+  final String? rideStatus;
 
   const RideCard({
     Key? key,
     required this.cabName,
     required this.cabStatus,
-    required this.distanceToCab,
-    required this.distanceToDestination,
+    this.distanceToCab,
+    this.distanceToDestination,
     required this.startCoords,
     required this.endCoords,
     required this.isShared,
@@ -30,6 +31,7 @@ class RideCard extends StatelessWidget {
     this.onCompleteRide,
     this.onTap,
     this.onBookNow,
+    this.rideStatus,
   }) : super(key: key);
 
   @override
@@ -55,7 +57,7 @@ class RideCard extends StatelessWidget {
                           color: Theme.of(context).colorScheme.primary,
                         ), // Use theme for better consistency
                   ),
-                  _buildStatusChip(context),
+                  if (rideStatus != null) _buildStatusChip(context, rideStatus!) else _buildStatusChip(context, cabStatus),
                 ],
               ),
               const SizedBox(height: 12),
@@ -65,9 +67,14 @@ class RideCard extends StatelessWidget {
               const SizedBox(height: 8),
               _buildInfoRow(context, Icons.location_searching, 'To:', endCoords),
               const SizedBox(height: 8),
-              _buildInfoRow(context, Icons.straighten, 'Distance to Cab:', distanceToCab),
-              const SizedBox(height: 8),
-              _buildInfoRow(context, Icons.alt_route, 'Distance to Destination:', distanceToDestination),
+              if (distanceToCab != null) ...[
+                _buildInfoRow(context, Icons.straighten, 'Distance to Cab:', distanceToCab!),
+                const SizedBox(height: 8),
+              ],
+              if (distanceToDestination != null) ...[
+                _buildInfoRow(context, Icons.alt_route, 'Distance to Destination:', distanceToDestination!),
+                const SizedBox(height: 8),
+              ],
               if (timestamp != null) ...[
                 const SizedBox(height: 8),
                 _buildInfoRow(context, Icons.access_time, 'Time:', timestamp!),
@@ -118,27 +125,42 @@ class RideCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusChip(BuildContext context) {
+  Widget _buildStatusChip(BuildContext context, String status) {
     Color chipColor;
     IconData chipIcon;
     String statusText;
 
-    if (isShared) {
-      chipColor = Theme.of(context).colorScheme.tertiary;
-      chipIcon = Icons.people;
-      statusText = 'Shared - $cabStatus';
-    } else if (cabStatus == 'Busy') {
-      chipColor = Theme.of(context).colorScheme.error;
-      chipIcon = Icons.directions_car;
-      statusText = 'Busy';
-    } else if (cabStatus == 'Available') {
-      chipColor = Theme.of(context).colorScheme.secondary;
-      chipIcon = Icons.check_circle;
-      statusText = 'Available';
-    } else {
-      chipColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.6); // Default color for unknown status
-      chipIcon = Icons.info_outline;
-      statusText = cabStatus; // Display original status if unknown
+    switch (status) {
+      case 'Shared':
+        chipColor = Theme.of(context).colorScheme.tertiary;
+        chipIcon = Icons.people;
+        statusText = 'Shared';
+        break;
+      case 'Busy':
+        chipColor = Theme.of(context).colorScheme.error;
+        chipIcon = Icons.directions_car;
+        statusText = 'Busy';
+        break;
+      case 'Available':
+        chipColor = Theme.of(context).colorScheme.secondary;
+        chipIcon = Icons.check_circle;
+        statusText = 'Available';
+        break;
+      case 'Completed':
+        chipColor = Colors.green;
+        chipIcon = Icons.check_circle_outline;
+        statusText = 'Completed';
+        break;
+      case 'Cancelled':
+        chipColor = Colors.redAccent;
+        chipIcon = Icons.cancel_outlined;
+        statusText = 'Cancelled';
+        break;
+      default:
+        chipColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.6);
+        chipIcon = Icons.info_outline;
+        statusText = status;
+        break;
     }
 
     return Chip(

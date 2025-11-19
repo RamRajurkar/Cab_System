@@ -18,25 +18,16 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.blue,
           foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
         ),
       ),
-      initialRoute: '/home',
+
+      // FIX: This ensures HomeScreen updates instantly
+      home: const HomeScreen(),
+
       routes: {
-        '/': (context) => HomeScreen(),
-        '/home': (context) => HomeScreen(),
         '/register': (context) => const RegisterScreen(),
         '/cab_register': (context) => CabRegistrationScreen(),
       },
