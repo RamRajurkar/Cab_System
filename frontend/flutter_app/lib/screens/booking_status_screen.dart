@@ -17,7 +17,7 @@ import 'package:lottie/lottie.dart';
 import '../config/api_config.dart';
 
 class BookingStatusScreen extends StatefulWidget {
-  final int cabId;
+  final String cabId;
   final LatLng cabInitialPosition;
   final LatLng userSource;
   final LatLng userDestination;

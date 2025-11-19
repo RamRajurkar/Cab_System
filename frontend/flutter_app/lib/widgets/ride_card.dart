@@ -6,8 +6,8 @@ class RideCard extends StatelessWidget {
   final bool isShared;
   final String? primaryRequestId;
   final String? timestamp;
-  final int? cabId;
-  final ValueChanged<int>? onCompleteRide;
+  final String? cabId;
+  final ValueChanged<String>? onCompleteRide;
   final VoidCallback? onTap;
 
   const RideCard({
@@ -63,7 +63,7 @@ class RideCard extends StatelessWidget {
                 const SizedBox(height: 16),
                 Center(
                   child: ElevatedButton.icon(
-                        onPressed: () => onCompleteRide!(cabId!),
+                        onPressed: () => onCompleteRide!(cabId as String),
                     icon: const Icon(Icons.check_circle_outline, color: Colors.white),
                     label: Text(
                       'Complete Ride',

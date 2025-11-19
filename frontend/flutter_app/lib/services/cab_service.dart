@@ -40,7 +40,7 @@ class CabService {
     double startLongitude,
     double endLatitude,
     double endLongitude,
-    int cabId,
+    String cabId,
     {bool isShared = false,
     String? primaryRequestId,
     String? newRequestId,

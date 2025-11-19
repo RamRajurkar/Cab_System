@@ -1,4 +1,4 @@
-// -------------------- FIXED & CLEANED MAP_SCREEN.DART -----------------------
+// -------------------- FULLY FIXED MAP_SCREEN.DART -----------------------
 
 import 'dart:async';
 import 'dart:convert';
@@ -49,11 +49,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _isLoading = false;
   String? _errorMessage;
   Map<String, dynamic>? _foundCabDetails;
-  Map<String, dynamic>? _assignedCab;
   String? _newRequestId;
 
   late CabService _cabService;
-
   late DraggableScrollableController _sheetController;
 
   @override
@@ -143,7 +141,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   // ---------------------- FETCH CAB LOCATIONS ----------------------
 
   Future<void> _fetchCabLocations() async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/cabs');
+    final url = Uri.parse('${ApiConfig.baseUrl}api/cabs');
 
     try {
       final resp = await http.get(url);
@@ -208,12 +206,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _isLoading = true;
       _errorMessage = null;
       _foundCabDetails = null;
-      _assignedCab = null;
-      _newRequestId = null; // Reset new request ID
+      _newRequestId = null;
     });
 
     try {
-      // final cabService = CabService(); // No longer needed as it's a class member
       final response = await _cabService.findCab(
         _sourceLocation!.latitude,
         _sourceLocation!.longitude,
@@ -224,13 +220,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (response != null) {
         setState(() {
           _foundCabDetails = response;
-          _newRequestId = response['new_request_id']; // Store new request ID
+          _newRequestId = response['new_request_id'];
         });
-        _sheetController.animateTo(0.5, // Expand to show options
+
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _sheetController.animateTo(
+            0.55,
             duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut);
+            curve: Curves.easeOut,
+          );
+        });
       } else {
-        setState(() => _errorMessage = 'No cabs or shared rides found.');
+        setState(() => _errorMessage = 'No cabs found.');
       }
     } catch (e) {
       setState(() => _errorMessage = 'Error finding cab: $e');
@@ -242,52 +243,46 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   // ---------------------- BOOK CAB ----------------------
 
-  Future<void> _bookCab(Map<String, dynamic> selectedOption) async {
+  Future<void> _bookCab(Map<String, dynamic> selected) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      // final cabService = CabService(); // No longer needed as it's a class member
-      final isShared = selectedOption['is_shared'] ?? false;
-      final primaryRequestId = selectedOption['primary_request_id'];
-
       final response = await _cabService.bookCab(
         _sourceLocation!.latitude,
         _sourceLocation!.longitude,
         _destinationLocation!.latitude,
         _destinationLocation!.longitude,
-        selectedOption['cab_id'] as int,
-        isShared: isShared,
-        primaryRequestId: primaryRequestId,
-        newRequestId: _newRequestId, // Pass the new request ID
+        selected['cab_id'].toString(),
+        isShared: selected['is_shared'] ?? false,
+        primaryRequestId: selected['primary_request_id'],
+        newRequestId: _newRequestId,
       );
 
       if (response != null && response['ride_id'] != null) {
-        setState(() {
-          _assignedCab = selectedOption;
-          _foundCabDetails = null;
-        });
-        _sheetController.animateTo(0.0, // Collapse the sheet
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut);
+        _sheetController.animateTo(
+          0.0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => BookingStatusScreen(
               rideId: response['ride_id'],
-              cabId: selectedOption['cab_id'],
-              cabInitialPosition: LatLng(selectedOption['latitude'], selectedOption['longitude']),
+              cabId: selected['cab_id'].toString(),
+              cabInitialPosition: LatLng(
+                  selected['latitude'], selected['longitude']),
               userSource: _sourceLocation!,
               userDestination: _destinationLocation!,
-              fare: selectedOption['fare'].toDouble(),
-              cabName: selectedOption['cab_name'],
+              fare: selected['fare'].toDouble(),
+              cabName: selected['cab_name'],
               onCabsRefresh: _fetchCabLocations,
               onRideCompleted: () {
-                _sheetController.animateTo(0.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOut);
+                _sheetController.animateTo(0.0);
                 _fetchCabLocations();
               },
             ),
@@ -298,7 +293,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       }
     } catch (e) {
       setState(() => _errorMessage = 'Error booking cab: $e');
-      debugPrint('Error booking cab: $e');
     } finally {
       setState(() => _isLoading = false);
     }
@@ -325,27 +319,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             options: flutter_map.MapOptions(
               initialCenter: _currentLocation ?? const LatLng(20.5937, 78.9629),
               initialZoom: 13,
-              onTap: (tapPos, latlng) {
-                setState(() {
-                  if (_sourceLocation == null) {
-                    _sourceLocation = latlng;
-                    _sourceController.text =
-                        '${latlng.latitude}, ${latlng.longitude}';
-                  } else if (_destinationLocation == null) {
-                    _destinationLocation = latlng;
-                    _destinationController.text =
-                        '${latlng.latitude}, ${latlng.longitude}';
-                    _calculateRoute();
-                  } else {
-                    _sourceLocation = latlng;
-                    _sourceController.text =
-                        '${latlng.latitude}, ${latlng.longitude}';
-                    _destinationLocation = null;
-                    _destinationController.clear();
-                    _routePoints.clear();
-                  }
-                });
-              },
             ),
             children: [
               flutter_map.TileLayer(
@@ -446,13 +419,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
                       const SizedBox(height: 12),
 
-                      _buildTextField(
-                          _sourceController, 'Pickup Location', Icons.location_on),
+                      _buildTextField(_sourceController, 'Pickup Location',
+                          Icons.location_on),
 
                       const SizedBox(height: 10),
 
-                      _buildTextField(_destinationController,
-                          'Drop Location', Icons.flag),
+                      _buildTextField(
+                          _destinationController, 'Drop Location', Icons.flag),
 
                       const SizedBox(height: 14),
 
@@ -469,30 +442,27 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
                       const SizedBox(height: 12),
 
-                      // -------- SHOW AVAILABLE CABS --------
+                      // ---------- SHOW RESULT CABS ----------
 
-                      if (_foundCabDetails != null) ...[
-                        if (_foundCabDetails!['individual_cabs'] != null)
-                          ...(_foundCabDetails!['individual_cabs'] as List)
-                              .map((cab) => RideCard(
-                                     cabName: cab['name'],
-                                     fare: (cab['fare'] as num).toDouble(),
-                                     cabId: cab['cab_id'],
-                                     onTap: () => _bookCab(cab),
-                                   ))
-                               .toList(),
-                        if (_foundCabDetails!['shared_rides'] != null)
-                          ...(_foundCabDetails!['shared_rides'] as List)
-                              .map((ride) => RideCard(
-                                     cabName: ride['name'],
-                                     fare: (ride['fare'] as num).toDouble(),
-                                     isShared: true,
-                                     primaryRequestId: ride['primary_request_id'],
-                                     cabId: ride['cab_id'],
-                                     onTap: () => _bookCab(ride),
-                                   ))
-                               .toList(),
-                      ],
+                      if (_foundCabDetails != null &&
+                          _foundCabDetails!['available_cabs'] != null)
+                        ...(_foundCabDetails!['available_cabs'] as List)
+                            .map((cabItem) {
+                          final inner = cabItem['cab'];
+
+                          return RideCard(
+                            cabName: inner['name'],
+                            fare: (cabItem['fare'] as num).toDouble(),
+                            cabId: inner['cab_id'].toString(),
+                            onTap: () => _bookCab({
+                              ...cabItem,
+                              'cab_id': inner['cab_id'],
+                              'cab_name': inner['name'],
+                              'latitude': inner['latitude'],
+                              'longitude': inner['longitude'],
+                            }),
+                          );
+                        }).toList(),
                     ],
                   ),
                 ),

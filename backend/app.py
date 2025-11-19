@@ -156,6 +156,7 @@ def find_cab():
             return jsonify({'error': 'No cab available'}), 404
 
         available_options.sort(key=lambda x: x['pickup_distance'])
+        print(f"Available options before returning: {available_options[:3]}")
         return jsonify({'available_cabs': available_options[:3], 'new_request_id': str(new_request_id)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
