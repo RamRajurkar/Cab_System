@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/cab_registration_screen.dart';
+import 'screens/login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,12 +25,13 @@ class MyApp extends StatelessWidget {
         ),
       ),
 
-      // FIX: This ensures HomeScreen updates instantly
-      home: const HomeScreen(),
+      initialRoute: '/login',
 
       routes: {
         '/register': (context) => const RegisterScreen(),
         '/cab_register': (context) => CabRegistrationScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/': (context) => const HomeScreen(),
       },
     );
   }

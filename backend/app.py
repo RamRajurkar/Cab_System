@@ -10,6 +10,9 @@ from gevent import spawn
 from dsa.db_utils import DatabaseUtils
 from dsa.heap_utils import CabFinder
 from dsa.utils import calculate_distance, calculate_fare
+import jwt
+import datetime
+from functools import wraps
 
 # ---------------------------------------------
 # INITIALIZATION
@@ -20,12 +23,53 @@ CORS(app)
 sockets = Sockets(app)
 db = DatabaseUtils(db_path='database.db')
 
+SECRET_KEY = 'your_secret_key' # Replace with a strong secret key
+
 clients = []  # connected websocket clients
 active_cab_targets = {}  # { cab_id: { target_lat, target_lng, phase } }
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'x-access-token' in request.headers:
+            token = request.headers['x-access-token']
+
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
+
+        try:
+            data = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+            # You might want to fetch the user from the database here
+            # current_user = User.query.filter_by(id=data['id']).first()
+        except:
+            return jsonify({'message': 'Token is invalid!'}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
 
 # ---------------------------------------------
 # ROUTES: CABS, REGISTER
 # ---------------------------------------------
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    # In a real application, you would verify these credentials against a database
+    # For this example, we'll use a simple hardcoded check
+    if username == 'testuser' and password == 'testpassword':
+        token = jwt.encode({
+            'user': username,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+        }, SECRET_KEY, algorithm='HS256')
+        return jsonify({'token': token})
+
+    return jsonify({'message': 'Invalid credentials'}), 401
+
+
 @app.route('/api/cabs', methods=['GET'])
 def get_cabs():
     try:
@@ -205,6 +249,7 @@ def reset_cab_status():
 
 
 @app.route('/api/ride_history', methods=['GET'])
+@token_required
 def ride_history():
     rides = db.get_ride_history()
     return jsonify(rides), 200

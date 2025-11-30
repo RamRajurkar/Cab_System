@@ -1,10 +1,32 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
 import 'package:smart_cab_allocation/screens/map_screen.dart';
 import 'package:smart_cab_allocation/screens/shared_ride_screen.dart';
 import 'package:smart_cab_allocation/screens/ride_history.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthToken();
+  }
+
+  Future<void> _checkAuthToken() async {
+    final String? token = await AuthService.getAuthToken();
+    if (token == null) {
+      // If no token, navigate to login screen
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacementNamed('/login');
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,15 +78,15 @@ class HomeScreen extends StatelessWidget {
 
               const SizedBox(height: 20),
 
-              _buildButton(
-                text: 'Book Shared Ride',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SharedRideScreen()),
-                  );
-                },
-              ),
+              // _buildButton(
+              //   text: 'Book Shared Ride',
+              //   onTap: () {
+              //     Navigator.push(
+              //       context,
+              //       MaterialPageRoute(builder: (_) => const SharedRideScreen()),
+              //     );
+              //   },
+              // ),
 
               const SizedBox(height: 20),
 

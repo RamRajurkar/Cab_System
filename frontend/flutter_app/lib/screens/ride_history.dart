@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../services/auth_service.dart';
 import '../widgets/ride_card.dart';
 import '../utils/constants.dart';
 
@@ -31,12 +31,11 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
     });
 
     try {
-      final SharedPreferences prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('jwt_token');
+      final String? token = await AuthService.getAuthToken();
 
       if (token == null) {
         setState(() {
-          _errorMessage = 'Authentication token not found';
+          _errorMessage = 'Authentication token not found. Please log in.';
           _isLoading = false;
         });
         return;
@@ -44,10 +43,10 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
 
       final response = await http.get(
         Uri.parse('${AppConstants.baseUrl}/api/ride_history'),
-        headers: <String, String>{
+        headers: {
           'x-access-token': token,
+          'Content-Type': 'application/json',
         },
-        
       );
 
       if (response.statusCode == 200) {
@@ -57,7 +56,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
         });
       } else {
         setState(() {
-          _errorMessage = 'Failed to fetch ride history';
+          _errorMessage = 'Failed to fetch ride history (Status ${response.statusCode})';
           _isLoading = false;
         });
       }
@@ -91,6 +90,7 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                       Text(
                         _errorMessage!,
                         style: const TextStyle(color: Colors.red),
+                        textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 20),
                       ElevatedButton(
@@ -102,28 +102,34 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
                 )
               : _rides.isEmpty
                   ? const Center(child: Text('No ride history available'))
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _rides.length,
-                      itemBuilder: (context, index) {
-                        final ride = _rides[index];
-                        final timestamp = DateTime.parse(ride['timestamp']);
-                        final formattedDate = DateFormat('MMM dd, yyyy - HH:mm').format(timestamp);
-                        
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: RideCard(
-                            cabName: ride['cab_name'],
-                            cabStatus: ride['shared'] ? 'Shared Ride' : 'Single Ride',
-                            startCoords: '(${ride['start_x']}, ${ride['start_y']})',
-                            endCoords: '(${ride['end_x']}, ${ride['end_y']})',
-                            isShared: ride['shared'],
-                            fare: '₹${(ride['fare'] ?? 0).toString()}',
-                            timestamp: formattedDate,
-                            rideStatus: 'Completed',
-                          ),
-                        );
-                      },
+                  : RefreshIndicator(
+                      onRefresh: _fetchRideHistory,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _rides.length,
+                        itemBuilder: (context, index) {
+                          final ride = _rides[index];
+                          final timestamp = DateTime.parse(ride['timestamp']);
+                          final formattedDate =
+                              DateFormat('MMM dd, yyyy - HH:mm').format(timestamp);
+
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: RideCard(
+                              cabName: ride['cab_name'],
+                              cabStatus: ride['shared'] ? 'Shared Ride' : 'Single Ride',
+                              startCoords:
+                                  '(${ride['start_x']}, ${ride['start_y']})',
+                              endCoords:
+                                  '(${ride['end_x']}, ${ride['end_y']})',
+                              isShared: ride['shared'],
+                              fare: '₹${(ride['fare'] ?? 0).toString()}',
+                              timestamp: formattedDate,
+                              rideStatus: 'Completed',
+                            ),
+                          );
+                        },
+                      ),
                     ),
     );
   }
