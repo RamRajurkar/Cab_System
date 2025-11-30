@@ -23,7 +23,7 @@ CORS(app)
 sockets = Sockets(app)
 db = DatabaseUtils(db_path='database.db')
 
-SECRET_KEY = 'your_secret_key' # Replace with a strong secret key
+SECRET_KEY = '9c840581f4f113e213c92b7e128e48ae4cbc0cc62cc25756f23c9758c3cb7b94' # Replace with a strong secret key
 
 clients = []  # connected websocket clients
 active_cab_targets = {}  # { cab_id: { target_lat, target_lng, phase } }
