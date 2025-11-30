@@ -58,6 +58,11 @@ def login():
     username = data.get('username')
     password = data.get('password')
 
+    print(f"Received username: {username}")
+    print(f"Received password: {password}")
+    print(f"Expected username: testuser")
+    print(f"Expected password: testpassword")
+
     # In a real application, you would verify these credentials against a database
     # For this example, we'll use a simple hardcoded check
     if username == 'testuser' and password == 'testpassword':

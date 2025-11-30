@@ -298,7 +298,7 @@ class DatabaseUtils:
         try:
             self.cursor.execute("""
                 SELECT r.id, r.cab_id, c.name, r.user_start_x, r.user_start_y, 
-                       r.user_end_x, r.user_end_y, r.timestamp, r.shared, r.fare 
+                       r.user_end_x, r.user_end_y, r.timestamp, r.shared 
                 FROM rides r 
                 JOIN cabs c ON r.cab_id = c.cab_id 
                 ORDER BY r.timestamp DESC
@@ -308,7 +308,7 @@ class DatabaseUtils:
                 'id': row[0],
                 'cab_id': row[1],
                 'cab_name': row[2],
-                'fare': row[9],
+                # 'fare': row[9],
                 'start_x': row[3],
                 'start_y': row[4],
                 'end_x': row[5],
